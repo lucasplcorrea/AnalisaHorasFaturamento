@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  helpdesk-billing:
+    build:
+      context: ./helpdesk-billing
+      dockerfile: Dockerfile
+    container_name: helpdesk-billing-app
+    ports:
+      - "5000:5000"
+    volumes:
+      # Volume para persistir banco SQLite
+      - helpdesk_data:/app/src/database
+      # Volume para uploads (opcional)
+      - helpdesk_uploads:/app/src/uploads
+      # Volume para relatórios gerados (opcional)
+      - helpdesk_reports:/app/src/reports
+    environment:
+      - FLASK_ENV=production
+      - PYTHONPATH=/app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  helpdesk_data:
+    driver: local
+  helpdesk_uploads:
+    driver: local
+  helpdesk_reports:
+    driver: local

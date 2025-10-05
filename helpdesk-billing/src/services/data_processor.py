@@ -1,8 +1,9 @@
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Any
 import re
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 from src.models.client import Client, TicketData
@@ -50,6 +51,9 @@ class DataProcessor:
             Dict com estatísticas e dados processados
         """
         try:
+            # Gerar ID único para este lote de upload
+            batch_id = str(uuid.uuid4())[:8]  # 8 caracteres únicos
+            
             # Ler o arquivo Excel
             df = pd.read_excel(file_path)
             
@@ -63,21 +67,23 @@ class DataProcessor:
                 year = year or inferred_year
             
             # Processar e salvar os dados no banco
-            processed_data = self._process_and_save_data(df_clean, month, year)
+            processed_data = self._process_and_save_data(df_clean, month, year, batch_id)
             
             # Calcular estatísticas
             stats = self._calculate_statistics(df_clean)
             
-            # Atualizar/criar clientes
+            # Atualizar/criar clientes e técnicos
             self._update_clients(df_clean)
+            self._update_technicians(df_clean)
             
             return {
                 'success': True,
-                'message': f'Dados processados com sucesso para {month:02d}/{year}',
+                'message': f'Dados processados com sucesso para {month:02d}/{year} (Lote: {batch_id})',
                 'statistics': stats,
                 'processed_records': len(df_clean),
                 'month': month,
                 'year': year,
+                'batch_id': batch_id,
                 'data': processed_data
             }
             
@@ -97,15 +103,22 @@ class DataProcessor:
         # Renomear colunas para o padrão interno
         df_clean = df_clean.rename(columns=self.column_mapping)
         
-        # Converter colunas de data
+        # Converter colunas de data com melhor tratamento
         date_columns = ['arrival_date', 'departure_date', 'completion_date', 'start_date', 'end_date']
         for col in date_columns:
             if col in df_clean.columns:
-                df_clean[col] = pd.to_datetime(df_clean[col], errors='coerce')
+                # Tentar múltiplos formatos de data
+                df_clean[col] = pd.to_datetime(df_clean[col], errors='coerce', infer_datetime_format=True)
+                
+                # Log de problemas de conversão
+                null_count = df_clean[col].isna().sum()
+                if null_count > 0:
+                    logger.warning(f"Coluna {col}: {null_count} valores não puderam ser convertidos para datetime")
         
         # Converter tempo total de atendimento para horas
         if 'total_service_time' in df_clean.columns:
             df_clean['total_service_time'] = df_clean['total_service_time'].apply(self._convert_time_to_hours)
+            logger.info(f"Processados {len(df_clean)} registros de tempo de atendimento")
         
         # Converter colunas booleanas
         boolean_columns = ['business_hours', 'external_service']
@@ -126,26 +139,39 @@ class DataProcessor:
         if pd.isna(time_value):
             return 0.0
         
+        # Se for um objeto timedelta (vem do Excel)
+        if isinstance(time_value, timedelta):
+            return time_value.total_seconds() / 3600.0
+        
+        # Se for número (int/float)
         if isinstance(time_value, (int, float)):
             return float(time_value)
         
+        # Se for string no formato HH:MM:SS
         if isinstance(time_value, str):
             time_str = time_value.strip()
             
+            # Formato HH:MM:SS ou HH:MM
             if ':' in time_str:
-                parts = time_str.split(':')
-                hours = float(parts[0])
-                minutes = float(parts[1]) if len(parts) > 1 else 0
-                seconds = float(parts[2]) if len(parts) > 2 else 0
-                return hours + (minutes / 60) + (seconds / 3600)
+                try:
+                    parts = time_str.split(':')
+                    hours = float(parts[0])
+                    minutes = float(parts[1]) if len(parts) > 1 else 0
+                    seconds = float(parts[2]) if len(parts) > 2 else 0
+                    return hours + (minutes / 60) + (seconds / 3600)
+                except (ValueError, IndexError):
+                    pass
             
+            # Tentar converter diretamente para float
             try:
                 return float(time_str)
             except ValueError:
+                # Extrair números da string
                 numbers = re.findall(r'\d+\.?\d*', time_str)
                 if numbers:
                     return float(numbers[0])
         
+        logger.warning(f"Não foi possível converter tempo: {time_value} (tipo: {type(time_value)})")
         return 0.0
     
     def _convert_to_boolean(self, value) -> bool | None:
@@ -158,15 +184,19 @@ class DataProcessor:
         
         if isinstance(value, str):
             value_lower = value.lower().strip()
-            if value_lower in ['sim', 'yes', 'true', '1', 'verdadeiro']:
+            # Valores considerados True
+            if value_lower in ['sim', 'yes', 'true', '1', 'verdadeiro', 's', 'y']:
                 return True
-            if value_lower in ['não', 'no', 'false', '0', 'falso']:
+            # Valores considerados False  
+            if value_lower in ['não', 'nao', 'no', 'false', '0', 'falso', 'n']:
                 return False
+            logger.warning(f"Valor boolean não reconhecido: '{value}' - assumindo None")
             return None
         
         if isinstance(value, (int, float)):
             return bool(value)
         
+        logger.warning(f"Tipo não suportado para conversão boolean: {type(value)} - valor: {value}")
         return None
     
     def _infer_period_from_data(self, df: pd.DataFrame) -> Tuple[int | None, int | None]:
@@ -179,49 +209,82 @@ class DataProcessor:
         
         return None, None
     
-    def _process_and_save_data(self, df: pd.DataFrame, month: int | None, year: int | None) -> List[Dict]:
-        """Processa e salva os dados no banco de dados"""
+    def _process_and_save_data(self, df: pd.DataFrame, month: int | None, year: int | None, batch_id: str) -> List[Dict]:
+        """Processa e salva os dados no banco de dados de forma otimizada"""
         processed_data = []
         
+        # Limpar dados existentes do período de forma eficiente
         if month is not None and year is not None:
-            db.session.query(TicketData).filter_by(processing_month=month, processing_year=year).delete()
+            deleted_count = db.session.query(TicketData).filter_by(
+                processing_month=month, 
+                processing_year=year
+            ).delete()
+            if deleted_count > 0:
+                logger.info(f"Removidos {deleted_count} registros existentes do período {month}/{year}")
         
-        for _, row in df.iterrows():
+        # Processar em lotes para melhor performance
+        batch_size = 100
+        total_rows = len(df)
+        logger.info(f"Processando {total_rows} registros em lotes de {batch_size}")
+        
+        for start_idx in range(0, total_rows, batch_size):
+            end_idx = min(start_idx + batch_size, total_rows)
+            batch_df = df.iloc[start_idx:end_idx]
+            
+            batch_objects = []
+            for _, row in batch_df.iterrows():
+                try:
+                    ticket_data = TicketData(
+                        ticket_id=str(row.get('ticket_id', '')) if pd.notna(row.get('ticket_id')) else None,
+                        client_name=str(row.get('client_name', '')) if pd.notna(row.get('client_name')) else None,
+                        subject=str(row.get('subject', '')) if pd.notna(row.get('subject')) else None,
+                        technician=str(row.get('technician', '')) if pd.notna(row.get('technician')) else None,
+                        primary_category=str(row.get('primary_category', '')) if pd.notna(row.get('primary_category')) else None,
+                        secondary_category=str(row.get('secondary_category', '')) if pd.notna(row.get('secondary_category')) else None,
+                        contact=str(row.get('contact', '')) if pd.notna(row.get('contact')) else None,
+                        arrival_date=row.get('arrival_date') if pd.notna(row.get('arrival_date')) else None,
+                        departure_date=row.get('departure_date') if pd.notna(row.get('departure_date')) else None,
+                        completion_date=row.get('completion_date') if pd.notna(row.get('completion_date')) else None,
+                        workstation=str(row.get('workstation', '')) if pd.notna(row.get('workstation')) else None,
+                        pause_reason=str(row.get('pause_reason', '')) if pd.notna(row.get('pause_reason')) else None,
+                        sector=str(row.get('sector', '')) if pd.notna(row.get('sector')) else None,
+                        status=str(row.get('status', '')) if pd.notna(row.get('status')) else None,
+                        ticket_type=str(row.get('ticket_type', '')) if pd.notna(row.get('ticket_type')) else None,
+                        service=str(row.get('service', '')) if pd.notna(row.get('service')) else None,
+                        description=str(row.get('description', '')) if pd.notna(row.get('description')) else None,
+                        business_hours=self._convert_to_boolean(row.get('business_hours')),
+                        external_service=self._convert_to_boolean(row.get('external_service')),
+                        start_date=row.get('start_date') if pd.notna(row.get('start_date')) else None,
+                        end_date=row.get('end_date') if pd.notna(row.get('end_date')) else None,
+                        total_service_time=float(row.get('total_service_time', 0.0)) if pd.notna(row.get('total_service_time')) else 0.0,
+                        processing_month=int(month) if pd.notna(month) else None,
+                        processing_year=int(year) if pd.notna(year) else None,
+                        upload_batch_id=batch_id
+                    )
+                    batch_objects.append(ticket_data)
+                    processed_data.append(ticket_data.to_dict())
+                except Exception as e:
+                    logger.error(f"Erro ao criar TicketData para linha {start_idx + len(batch_objects)}: {e}")
+                    continue
+            
+            # Inserir lote no banco
             try:
-                ticket_data = TicketData(
-                    ticket_id=str(row.get('ticket_id', '')) if pd.notna(row.get('ticket_id')) else None,
-                    client_name=str(row.get('client_name', '')) if pd.notna(row.get('client_name')) else None,
-                    subject=str(row.get('subject', '')) if pd.notna(row.get('subject')) else None,
-                    technician=str(row.get('technician', '')) if pd.notna(row.get('technician')) else None,
-                    primary_category=str(row.get('primary_category', '')) if pd.notna(row.get('primary_category')) else None,
-                    secondary_category=str(row.get('secondary_category', '')) if pd.notna(row.get('secondary_category')) else None,
-                    contact=str(row.get('contact', '')) if pd.notna(row.get('contact')) else None,
-                    arrival_date=row.get('arrival_date') if pd.notna(row.get('arrival_date')) else None,
-                    departure_date=row.get('departure_date') if pd.notna(row.get('departure_date')) else None,
-                    completion_date=row.get('completion_date') if pd.notna(row.get('completion_date')) else None,
-                    workstation=str(row.get('workstation', '')) if pd.notna(row.get('workstation')) else None,
-                    pause_reason=str(row.get('pause_reason', '')) if pd.notna(row.get('pause_reason')) else None,
-                    sector=str(row.get('sector', '')) if pd.notna(row.get('sector')) else None,
-                    status=str(row.get('status', '')) if pd.notna(row.get('status')) else None,
-                    ticket_type=str(row.get('ticket_type', '')) if pd.notna(row.get('ticket_type')) else None,
-                    service=str(row.get('service', '')) if pd.notna(row.get('service')) else None,
-                    description=str(row.get('description', '')) if pd.notna(row.get('description')) else None,
-                    business_hours=self._convert_to_boolean(row.get('business_hours')),
-                    external_service=self._convert_to_boolean(row.get('external_service')),
-                    start_date=row.get('start_date') if pd.notna(row.get('start_date')) else None,
-                    end_date=row.get('end_date') if pd.notna(row.get('end_date')) else None,
-                    total_service_time=float(row.get('total_service_time', 0.0)) if pd.notna(row.get('total_service_time')) else 0.0,
-                    processing_month=int(month) if pd.notna(month) else None,
-                    processing_year=int(year) if pd.notna(year) else None
-                )
-                db.session.add(ticket_data)
-                processed_data.append(ticket_data.to_dict())
+                db.session.add_all(batch_objects)
+                db.session.commit()
+                logger.info(f"Lote {start_idx + 1}-{end_idx} inserido com sucesso ({len(batch_objects)} registros)")
             except Exception as e:
-                logger.error(f"Erro ao criar TicketData para a linha: {row.to_dict()}")
-                logger.exception("Detalhes da exceção:")
-                continue
+                logger.error(f"Erro ao inserir lote {start_idx + 1}-{end_idx}: {e}")
+                db.session.rollback()
+                # Tentar inserir um por vez em caso de erro
+                for obj in batch_objects:
+                    try:
+                        db.session.add(obj)
+                        db.session.commit()
+                    except Exception as individual_error:
+                        logger.error(f"Erro ao inserir registro individual: {individual_error}")
+                        db.session.rollback()
         
-        db.session.commit()
+        logger.info(f"Processamento concluído: {len(processed_data)} registros salvos")
         return processed_data
     
     def _update_clients(self, df: pd.DataFrame):
@@ -242,9 +305,58 @@ class DataProcessor:
                 new_client = Client(
                     name=client_name,
                     contact=str(client_data.get('contact', '')) if pd.notna(client_data.get('contact')) else None,
-                    sector=str(client_data.get('sector', '')) if pd.notna(client_data.get('sector')) else None
+                    sector=str(client_data.get('sector', '')) if pd.notna(client_data.get('sector')) else None,
+                    # Usar valores padrão para novos clientes
+                    contract_hours=10.0,
+                    hourly_rate=100.0,
+                    overtime_rate=115.0,
+                    external_service_rate=88.0,
+                    active=True
                 )
                 db.session.add(new_client)
+                logger.info(f"Novo cliente criado: {client_name}")
+            else:
+                # Atualizar informações de contato se disponível
+                client_data = df[df['client_name'] == client_name].iloc[0]
+                updated = False
+                
+                if pd.notna(client_data.get('contact')) and not existing_client.contact:
+                    existing_client.contact = str(client_data.get('contact', ''))
+                    updated = True
+                    
+                if pd.notna(client_data.get('sector')) and not existing_client.sector:
+                    existing_client.sector = str(client_data.get('sector', ''))
+                    updated = True
+                
+                if updated:
+                    logger.info(f"Cliente atualizado: {client_name}")
+        
+        db.session.commit()
+    
+    def _update_technicians(self, df: pd.DataFrame):
+        """Atualiza ou cria técnicos baseado nos dados processados"""
+        from src.models.technician import Technician
+        
+        unique_technicians = df['technician'].unique()
+        
+        for technician_name in unique_technicians:
+            if pd.isna(technician_name) or not str(technician_name).strip():
+                continue
+                
+            technician_name = str(technician_name).strip()
+            
+            existing_technician = db.session.query(Technician).filter_by(name=technician_name).first()
+            
+            if not existing_technician:
+                new_technician = Technician(
+                    name=technician_name,
+                    # Valores padrão para novos técnicos
+                    monthly_hours_target=160.0,
+                    efficiency_target=85.0,
+                    active=True
+                )
+                db.session.add(new_technician)
+                logger.info(f"Novo técnico criado: {technician_name}")
         
         db.session.commit()
     
@@ -297,7 +409,7 @@ class BillingCalculator:
     
     def calculate_client_billing(self, client_name: str, month: int, year: int) -> Dict[str, Any]:
         """
-        Calcula o faturamento para um cliente específico
+        Calcula o faturamento para um cliente específico usando suas regras configuradas
         
         Args:
             client_name: Nome do cliente
@@ -307,10 +419,23 @@ class BillingCalculator:
         Returns:
             Dict com informações de faturamento
         """
-        client = db.session.query(Client).filter_by(name=client_name).first()
+        # Buscar cliente no banco
+        client = db.session.query(Client).filter_by(name=client_name, active=True).first()
         if not client:
-            return {'error': f'Cliente {client_name} não encontrado'}
+            # Se cliente não existe, criar com valores padrão
+            logger.warning(f"Cliente {client_name} não encontrado, criando com valores padrão")
+            client = Client(
+                name=client_name,
+                contract_hours=10.0,
+                hourly_rate=100.0,
+                overtime_rate=115.0,
+                external_service_rate=88.0,
+                active=True
+            )
+            db.session.add(client)
+            db.session.commit()
         
+        # Buscar tickets do cliente no período
         tickets = TicketData.query.filter_by(
             client_name=client_name,
             processing_month=month,
@@ -320,24 +445,34 @@ class BillingCalculator:
         if not tickets:
             return {
                 'client_name': client_name,
-                'total_hours': 0,
+                'client_id': client.id,
+                'total_hours': 0.0,
                 'contract_hours': client.contract_hours,
-                'overtime_hours': 0,
+                'used_contract_hours': 0.0,
+                'overtime_hours': 0.0,
                 'external_services': 0,
-                'contract_value': 0,
-                'overtime_value': 0,
-                'external_services_value': 0,
-                'total_value': 0,
-                'tickets': []
+                'contract_value': 0.0,
+                'overtime_value': 0.0,
+                'external_services_value': 0.0,
+                'total_value': 0.0,
+                'tickets': [],
+                'rates': {
+                    'hourly_rate': client.hourly_rate,
+                    'overtime_rate': client.overtime_rate,
+                    'external_service_rate': client.external_service_rate
+                }
             }
         
-        total_hours = sum(ticket.total_service_time for ticket in tickets if ticket.total_service_time is not None)
+        # Calcular totais
+        total_hours = sum(ticket.total_service_time or 0.0 for ticket in tickets)
         external_services_count = sum(1 for ticket in tickets if ticket.external_service)
         
-        contract_hours = min(total_hours, client.contract_hours)
-        overtime_hours = max(0, total_hours - client.contract_hours)
+        # Calcular horas contratuais e excedentes
+        used_contract_hours = min(total_hours, client.contract_hours)
+        overtime_hours = max(0.0, total_hours - client.contract_hours)
         
-        contract_value = contract_hours * client.hourly_rate
+        # Calcular valores usando as regras específicas do cliente
+        contract_value = used_contract_hours * client.hourly_rate
         overtime_value = overtime_hours * client.overtime_rate
         external_services_value = external_services_count * client.external_service_rate
         
@@ -346,21 +481,22 @@ class BillingCalculator:
         return {
             'client_name': client_name,
             'client_id': client.id,
-            'total_hours': total_hours,
+            'total_hours': round(total_hours, 2),
             'contract_hours': client.contract_hours,
-            'used_contract_hours': contract_hours,
-            'overtime_hours': overtime_hours,
+            'used_contract_hours': round(used_contract_hours, 2),
+            'overtime_hours': round(overtime_hours, 2),
             'external_services': external_services_count,
-            'contract_value': contract_value,
-            'overtime_value': overtime_value,
-            'external_services_value': external_services_value,
-            'total_value': total_value,
+            'contract_value': round(contract_value, 2),
+            'overtime_value': round(overtime_value, 2),
+            'external_services_value': round(external_services_value, 2),
+            'total_value': round(total_value, 2),
             'tickets': [ticket.to_dict() for ticket in tickets],
             'rates': {
                 'hourly_rate': client.hourly_rate,
                 'overtime_rate': client.overtime_rate,
                 'external_service_rate': client.external_service_rate
-            }
+            },
+            'tickets_count': len(tickets)
         }
     
     def calculate_all_clients_billing(self, month: int, year: int) -> List[Dict[str, Any]]:

@@ -5,17 +5,25 @@ class Client(db.Model):
     __tablename__ = 'clients'
     
     id = db.Column(db.Integer, primary_key=True)
-    # Outras colunas Integer que podem ser anuláveis
-    # Por exemplo, se houvesse outras colunas Integer que não fossem chaves primárias e pudessem receber NaN
     name = db.Column(db.String(255), nullable=False, unique=True)
     contact = db.Column(db.String(255))
     sector = db.Column(db.String(100))
     
-    # Configurações do contrato
-    contract_hours = db.Column(db.Float, default=10.0)  # Horas contratuais base
-    hourly_rate = db.Column(db.Float, default=100.0)    # Valor da hora contratual
-    overtime_rate = db.Column(db.Float, default=115.0)  # Valor da hora excedente
-    external_service_rate = db.Column(db.Float, default=88.0)  # Valor do atendimento externo
+    # Configurações do contrato - valores expandidos
+    contract_hours = db.Column(db.Float, default=10.0)    # Horas contratuais base por mês
+    hourly_rate = db.Column(db.Float, default=100.0)      # Valor da hora contratual (R$)
+    overtime_rate = db.Column(db.Float, default=115.0)    # Valor da hora excedente (R$)
+    external_service_rate = db.Column(db.Float, default=88.0)  # Valor do atendimento externo/deslocamento (R$)
+    
+    # Informações adicionais para faturamento
+    email = db.Column(db.String(255))                     # Email para envio de faturas
+    phone = db.Column(db.String(50))                      # Telefone de contato
+    whatsapp_contact = db.Column(db.String(255))          # Nome do responsável para receber relatórios por WhatsApp
+    address = db.Column(db.Text)                          # Endereço completo
+    notes = db.Column(db.Text)                            # Observações especiais
+    
+    # Status
+    active = db.Column(db.Boolean, default=True)          # Cliente ativo
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -33,6 +41,12 @@ class Client(db.Model):
             'hourly_rate': self.hourly_rate,
             'overtime_rate': self.overtime_rate,
             'external_service_rate': self.external_service_rate,
+            'email': self.email,
+            'phone': self.phone,
+            'whatsapp_contact': self.whatsapp_contact,
+            'address': self.address,
+            'notes': self.notes,
+            'active': self.active,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
@@ -71,6 +85,9 @@ class TicketData(db.Model):
     # Referência ao mês/ano do processamento
     processing_month = db.Column(db.Integer, nullable=True)
     processing_year = db.Column(db.Integer, nullable=True)
+    
+    # ID do lote de upload para permitir deletar uploads específicos
+    upload_batch_id = db.Column(db.String(50), nullable=True)
 
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=True)
@@ -106,5 +123,6 @@ class TicketData(db.Model):
             'total_service_time': self.total_service_time,
             'processing_month': self.processing_month,
             'processing_year': self.processing_year,
+            'upload_batch_id': self.upload_batch_id,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }

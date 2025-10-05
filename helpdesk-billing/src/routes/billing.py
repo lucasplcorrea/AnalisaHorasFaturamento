@@ -95,7 +95,8 @@ def update_client(client_id):
         data = request.get_json()
         
         # Atualizar campos permitidos
-        allowed_fields = ['name', 'contact', 'sector', 'contract_hours', 
+        allowed_fields = ['name', 'contact', 'sector', 'email', 'phone', 'whatsapp_contact', 
+                         'address', 'notes', 'active', 'contract_hours', 
                          'hourly_rate', 'overtime_rate', 'external_service_rate']
         
         for field in allowed_fields:

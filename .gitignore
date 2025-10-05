@@ -210,3 +210,12 @@ data/
 *.xlsx
 *.db
 *.pdf
+
+helpdesk-billing-frontend\node_modules
+
+./helpdesk-billing-frontend/node_modules/*
+helpdesk-billing-frontend/node_modules/*
+helpdesk-billing-frontend/node_modules
+helpdesk-billing/src/database
+
+

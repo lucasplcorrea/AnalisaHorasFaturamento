@@ -1,14 +1,15 @@
 import { useState } from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button.jsx'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
-import { Upload, BarChart3, Users, FileText, Settings } from 'lucide-react'
+import { Upload, BarChart3, Users, FileText, Settings, TrendingUp } from 'lucide-react'
 import UploadPage from './components/UploadPage'
 import DashboardPage from './components/DashboardPage'
 import ClientsPage from './components/ClientsPage'
+import ClientManagementPage from './components/ClientManagementPage'
 import ReportsPage from './components/ReportsPage'
 import ChartsPage from './components/ChartsPage'
+import AnalyticsPage from './components/AnalyticsPage'
 import './App.css'
 
 function App() {
@@ -29,7 +30,7 @@ function App() {
 
         {/* Navigation Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-5 mb-8">
+          <TabsList className="grid w-full grid-cols-7 mb-8">
             <TabsTrigger value="upload" className="flex items-center gap-2">
               <Upload className="h-4 w-4" />
               Upload de Dados
@@ -42,9 +43,17 @@ function App() {
               <BarChart3 className="h-4 w-4" />
               Gráficos
             </TabsTrigger>
+            <TabsTrigger value="analytics" className="flex items-center gap-2">
+              <TrendingUp className="h-4 w-4" />
+              Analytics
+            </TabsTrigger>
             <TabsTrigger value="clients" className="flex items-center gap-2">
               <Users className="h-4 w-4" />
               Clientes
+            </TabsTrigger>
+            <TabsTrigger value="client-management" className="flex items-center gap-2">
+              <Settings className="h-4 w-4" />
+              Configurações
             </TabsTrigger>
             <TabsTrigger value="reports" className="flex items-center gap-2">
               <FileText className="h-4 w-4" />
@@ -65,8 +74,16 @@ function App() {
             <ChartsPage />
           </TabsContent>
 
+          <TabsContent value="analytics" className="space-y-6">
+            <AnalyticsPage />
+          </TabsContent>
+
           <TabsContent value="clients" className="space-y-6">
             <ClientsPage />
+          </TabsContent>
+
+          <TabsContent value="client-management" className="space-y-6">
+            <ClientManagementPage />
           </TabsContent>
 
           <TabsContent value="reports" className="space-y-6">

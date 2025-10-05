@@ -1,5 +1,7 @@
 from flask import Blueprint, request, jsonify, send_file, current_app
 import os
+import zipfile
+import tempfile
 from datetime import datetime
 from src.services.pdf_generator import PDFReportGenerator
 from src.database import db
@@ -192,6 +194,61 @@ def list_reports(month, year):
         
     except Exception as e:
         return jsonify({'error': f'Erro ao listar relatórios: {str(e)}'}), 500
+
+@reports_bp.route('/generate-selected-zip/<int:month>/<int:year>', methods=['POST'])
+def generate_selected_zip(month, year):
+    """Gera ZIP com PDFs selecionados"""
+    try:
+        data = request.get_json()
+        selected_clients = data.get('clients', [])
+        
+        if not selected_clients:
+            return jsonify({'error': 'Nenhum cliente selecionado'}), 400
+        
+        generator = PDFReportGenerator()
+        
+        # Criar arquivo ZIP temporário
+        temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+        temp_zip.close()
+        
+        with zipfile.ZipFile(temp_zip.name, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            generated_count = 0
+            errors = []
+            
+            for client_name in selected_clients:
+                try:
+                    # Gerar PDF para o cliente
+                    pdf_path = generator.generate_client_report(client_name, month, year)
+                    
+                    if os.path.exists(pdf_path):
+                        # Adicionar ao ZIP com nome limpo
+                        safe_client_name = client_name.replace(' ', '_').replace('/', '_')
+                        zip_filename = f"fatura_{safe_client_name}_{month:02d}_{year}.pdf"
+                        zip_file.write(pdf_path, zip_filename)
+                        generated_count += 1
+                    else:
+                        errors.append(f'Erro ao gerar PDF para {client_name}')
+                        
+                except Exception as e:
+                    errors.append(f'Erro ao processar {client_name}: {str(e)}')
+        
+        if generated_count == 0:
+            os.unlink(temp_zip.name)
+            return jsonify({'error': 'Nenhum PDF foi gerado com sucesso'}), 500
+        
+        # Definir nome do arquivo ZIP
+        zip_filename = f"faturas_selecionadas_{month:02d}_{year}.zip"
+        
+        # Retornar ZIP para download
+        return send_file(
+            temp_zip.name,
+            as_attachment=True,
+            download_name=zip_filename,
+            mimetype='application/zip'
+        )
+        
+    except Exception as e:
+        return jsonify({'error': f'Erro interno do servidor: {str(e)}'}), 500
 
 @reports_bp.route('/cleanup-reports', methods=['POST'])
 def cleanup_old_reports():

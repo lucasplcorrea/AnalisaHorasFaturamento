@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
 import { Loader2, Users, Clock, ExternalLink, BarChart3, TrendingUp, AlertCircle } from 'lucide-react'
+import { formatHoursToHoursMinutes, formatCurrency, formatDate } from '@/lib/formatters.js'
 
 const DashboardPage = () => {
   const [periods, setPeriods] = useState([])
@@ -58,17 +59,6 @@ const DashboardPage = () => {
     } catch (err) {
       console.error('Erro ao carregar dados de faturamento:', err)
     }
-  }
-
-  const formatCurrency = (value) => {
-    return new Intl.NumberFormat('pt-BR', {
-      style: 'currency',
-      currency: 'BRL'
-    }).format(value)
-  }
-
-  const formatHours = (hours) => {
-    return `${hours?.toFixed(2) || 0}h`
   }
 
   if (loading && !statistics) {
@@ -149,7 +139,7 @@ const DashboardPage = () => {
                 <Clock className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{formatHours(statistics.general?.total_hours)}</div>
+                <div className="text-2xl font-bold">{formatHoursToHoursMinutes(statistics.general?.total_hours)}</div>
               </CardContent>
             </Card>
 
@@ -188,7 +178,7 @@ const DashboardPage = () => {
                   <div className="text-center">
                     <p className="text-sm text-muted-foreground">Horas Excedentes</p>
                     <p className="text-2xl font-bold text-orange-600">
-                      {formatHours(billing.summary?.total_overtime_hours)}
+                      {formatHoursToHoursMinutes(billing.summary?.total_overtime_hours)}
                     </p>
                   </div>
                   <div className="text-center">
@@ -222,7 +212,7 @@ const DashboardPage = () => {
                     <div key={technician} className="border rounded-lg p-4">
                       <div className="flex items-center justify-between mb-3">
                         <h4 className="font-semibold text-lg">{technician}</h4>
-                        <Badge variant="outline">{formatHours(hours)}</Badge>
+                        <Badge variant="outline">{formatHoursToHoursMinutes(hours)}</Badge>
                       </div>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                         <div>
@@ -264,7 +254,7 @@ const DashboardPage = () => {
                     .map(([client, hours]) => (
                       <div key={client} className="flex items-center justify-between">
                         <span className="text-sm font-medium truncate">{client}</span>
-                        <Badge variant="secondary">{formatHours(hours)}</Badge>
+                        <Badge variant="secondary">{formatHoursToHoursMinutes(hours)}</Badge>
                       </div>
                     ))}
                 </div>

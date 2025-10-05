@@ -12,6 +12,10 @@ from src.models.client import Client, TicketData
 from src.routes.user import user_bp
 from src.routes.billing import billing_bp
 from src.routes.reports import reports_bp
+from src.routes.client import client_bp
+from src.routes.technician import technician_bp
+from src.routes.admin import admin_bp
+from src.routes.analytics import analytics_bp
 
 def create_app():
     """Cria e configura a aplicação Flask."""
@@ -26,12 +30,26 @@ def create_app():
     app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{db_path}"
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     
+    # Configurações específicas do SQLite para performance
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,
+        'pool_recycle': 300,
+        'connect_args': {
+            'timeout': 30,
+            'check_same_thread': False
+        }
+    }
+    
     db.init_app(app)
 
     # --- Registro dos Blueprints ---
     app.register_blueprint(user_bp, url_prefix='/api')
     app.register_blueprint(billing_bp, url_prefix='/api')
     app.register_blueprint(reports_bp, url_prefix='/api')
+    app.register_blueprint(client_bp, url_prefix='/api')
+    app.register_blueprint(technician_bp, url_prefix='/api')
+    app.register_blueprint(admin_bp, url_prefix='/api')
+    app.register_blueprint(analytics_bp, url_prefix='/api')
 
     # --- Servir Arquivos Estáticos (Frontend) ---
     @app.route('/', defaults={'path': ''})
@@ -48,9 +66,37 @@ def create_app():
 # --- Inicialização da Aplicação ---
 app = create_app()
 
-# Cria as tabelas do banco de dados dentro do contexto da aplicação
+# Cria as tabelas do banco de dados e executa migrações dentro do contexto da aplicação
 with app.app_context():
+    # Importar e executar migrações
+    try:
+        from src.migrations import migrate_database
+        print("🔄 Verificando migrações do banco de dados...")
+        if migrate_database(app):
+            print("✅ Migrações executadas com sucesso")
+        else:
+            print("❌ Erro ao executar migrações")
+    except Exception as e:
+        print(f"⚠️ Erro nas migrações: {e}")
+    
+    # Criar tabelas (caso não existam)
     db.create_all()
+    
+    # Configurar SQLite para melhor performance
+    try:
+        if 'sqlite' in app.config['SQLALCHEMY_DATABASE_URI']:
+            with db.engine.connect() as conn:
+                # Configurações de performance para SQLite
+                conn.execute(db.text("PRAGMA journal_mode=WAL"))  # Write-Ahead Logging
+                conn.execute(db.text("PRAGMA synchronous=NORMAL"))  # Menos sincronização  
+                conn.execute(db.text("PRAGMA cache_size=10000"))  # Cache maior
+                conn.execute(db.text("PRAGMA temp_store=MEMORY"))  # Temp files em memória
+                conn.execute(db.text("PRAGMA mmap_size=268435456"))  # Memory mapping 256MB
+        print("⚡ Configurações de performance SQLite aplicadas")
+    except Exception as e:
+        print(f"⚠️ Erro ao configurar SQLite: {e}")
+        
+    print("📊 Banco de dados inicializado")
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

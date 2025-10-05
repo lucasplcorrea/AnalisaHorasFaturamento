@@ -6,7 +6,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table.jsx'
-import { FileText, Download, Loader2, AlertCircle, CheckCircle, Clock, ExternalLink, TrendingUp } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox.jsx'
+import { FileText, Download, Loader2, AlertCircle, CheckCircle, Clock, ExternalLink, TrendingUp, Archive, ArrowUpDown } from 'lucide-react'
+import { formatHoursToHoursMinutes, formatCurrency, formatDate } from '@/lib/formatters.js'
 
 const ReportsPage = () => {
   const [periods, setPeriods] = useState([])
@@ -15,6 +17,10 @@ const ReportsPage = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [generatingPdf, setGeneratingPdf] = useState(null)
+  const [selectedClients, setSelectedClients] = useState([])
+  const [selectAll, setSelectAll] = useState(false)
+  const [sortBy, setSortBy] = useState('name') // 'name', 'hours', 'value'
+  const [sortOrder, setSortOrder] = useState('asc') // 'asc', 'desc'
 
   useEffect(() => {
     loadPeriods()
@@ -112,20 +118,112 @@ const ReportsPage = () => {
     }
   }
 
-  const formatCurrency = (value) => {
-    return new Intl.NumberFormat('pt-BR', {
-      style: 'currency',
-      currency: 'BRL'
-    }).format(value)
+  const handleSelectAll = (checked) => {
+    setSelectAll(checked)
+    if (checked) {
+      setSelectedClients(billing?.clients?.map(client => client.client_name) || [])
+    } else {
+      setSelectedClients([])
+    }
   }
 
-  const formatHours = (hours) => {
-    return `${hours?.toFixed(2) || 0}h`
+  const handleClientSelect = (clientName, checked) => {
+    if (checked) {
+      setSelectedClients(prev => [...prev, clientName])
+    } else {
+      setSelectedClients(prev => prev.filter(name => name !== clientName))
+      setSelectAll(false)
+    }
   }
 
-  const formatDate = (dateString) => {
-    if (!dateString) return '-'
-    return new Date(dateString).toLocaleDateString('pt-BR')
+  const generateSelectedZip = async () => {
+    if (selectedClients.length === 0) {
+      setError('Selecione pelo menos um cliente para gerar o ZIP')
+      return
+    }
+
+    setGeneratingPdf('zip')
+    try {
+      const [month, year] = selectedPeriod.split('/')
+      
+      const response = await axios.post(`/api/generate-selected-zip/${month}/${year}`, {
+        clients: selectedClients
+      }, {
+        responseType: 'blob'
+      })
+      
+      // Criar URL para download
+      const url = window.URL.createObjectURL(new Blob([response.data]))
+      const link = document.createElement('a')
+      link.href = url
+      
+      // Definir nome do arquivo
+      const filename = `faturas_selecionadas_${month}_${year}.zip`
+      link.setAttribute('download', filename)
+      
+      // Fazer download
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      
+      // Limpar URL
+      window.URL.revokeObjectURL(url)
+      setError(null)
+      
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro ao gerar ZIP dos relatórios selecionados')
+    } finally {
+      setGeneratingPdf(null)
+    }
+  }
+
+  const handleSort = (field) => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortBy(field)
+      setSortOrder('asc')
+    }
+  }
+
+  const getSortedClients = () => {
+    if (!billing?.clients) return []
+
+    const sorted = [...billing.clients].sort((a, b) => {
+      let aValue, bValue
+
+      switch (sortBy) {
+        case 'name':
+          aValue = a.client_name.toLowerCase()
+          bValue = b.client_name.toLowerCase()
+          break
+        case 'hours':
+          aValue = a.total_hours || 0
+          bValue = b.total_hours || 0
+          break
+        case 'value':
+          aValue = a.total_value || 0
+          bValue = b.total_value || 0
+          break
+        default:
+          return 0
+      }
+
+      if (sortOrder === 'asc') {
+        return aValue > bValue ? 1 : -1
+      } else {
+        return aValue < bValue ? 1 : -1
+      }
+    })
+
+    return sorted
+  }
+
+  const getSortIcon = (field) => {
+    if (sortBy !== field) return <ArrowUpDown className="h-4 w-4" />
+    return sortOrder === 'asc' 
+      ? <ArrowUpDown className="h-4 w-4 text-blue-600" />
+      : <ArrowUpDown className="h-4 w-4 text-blue-600 rotate-180" />
   }
 
   if (loading && !billing) {
@@ -151,29 +249,51 @@ const ReportsPage = () => {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center gap-4">
-            <label className="text-sm font-medium">Período:</label>
-            <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder="Selecione o período" />
-              </SelectTrigger>
-              <SelectContent>
-                {periods.map((period) => (
-                  <SelectItem key={period.label} value={period.label}>
-                    {period.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <label className="text-sm font-medium">Período:</label>
+              <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
+                <SelectTrigger className="w-48">
+                  <SelectValue placeholder="Selecione o período" />
+                </SelectTrigger>
+                <SelectContent>
+                  {periods.map((period) => (
+                    <SelectItem key={period.label} value={period.label}>
+                      {period.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             {billing?.clients && billing.clients.length > 0 && (
-              <Button
-                onClick={generateAllPdfs}
-                disabled={generatingPdf}
-                className="ml-auto"
-              >
-                <Download className="h-4 w-4 mr-2" />
-                Gerar Todos os PDFs
-              </Button>
+              <div className="flex items-center gap-2">
+                {selectedClients.length > 0 && (
+                  <Button
+                    onClick={generateSelectedZip}
+                    disabled={generatingPdf}
+                    variant="outline"
+                  >
+                    {generatingPdf === 'zip' ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Gerando ZIP...
+                      </>
+                    ) : (
+                      <>
+                        <Archive className="h-4 w-4 mr-2" />
+                        Baixar Selecionados ({selectedClients.length})
+                      </>
+                    )}
+                  </Button>
+                )}
+                <Button
+                  onClick={generateAllPdfs}
+                  disabled={generatingPdf}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Gerar Todos os PDFs
+                </Button>
+              </div>
             )}
           </div>
         </CardContent>
@@ -211,13 +331,13 @@ const ReportsPage = () => {
                 <div className="text-center">
                   <p className="text-sm text-muted-foreground">Total de Horas</p>
                   <p className="text-2xl font-bold text-blue-600">
-                    {formatHours(billing.summary?.total_hours)}
+                    {formatHoursToHoursMinutes(billing.summary?.total_hours)}
                   </p>
                 </div>
                 <div className="text-center">
                   <p className="text-sm text-muted-foreground">Horas Excedentes</p>
                   <p className="text-2xl font-bold text-orange-600">
-                    {formatHours(billing.summary?.total_overtime_hours)}
+                    {formatHoursToHoursMinutes(billing.summary?.total_overtime_hours)}
                   </p>
                 </div>
               </div>
@@ -229,7 +349,13 @@ const ReportsPage = () => {
             <CardHeader>
               <CardTitle>Faturamento por Cliente</CardTitle>
               <CardDescription>
-                Clique em "Gerar PDF" para criar o relatório individual de cada cliente
+                Selecione os clientes para download em ZIP ou clique em "Gerar PDF" para relatórios individuais
+                {billing?.clients && billing.clients.length > 0 && (
+                  <span className="ml-2 text-sm text-blue-600">
+                    • Ordenado por {sortBy === 'name' ? 'nome' : sortBy === 'hours' ? 'horas' : 'valor'} 
+                    ({sortOrder === 'asc' ? 'crescente' : 'decrescente'})
+                  </span>
+                )}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -237,17 +363,59 @@ const ReportsPage = () => {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Cliente</TableHead>
-                      <TableHead>Horas Utilizadas</TableHead>
+                      <TableHead className="w-12">
+                        <Checkbox
+                          checked={selectAll}
+                          onCheckedChange={handleSelectAll}
+                        />
+                      </TableHead>
+                      <TableHead>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-auto p-0 font-semibold hover:bg-transparent"
+                          onClick={() => handleSort('name')}
+                        >
+                          Cliente
+                          {getSortIcon('name')}
+                        </Button>
+                      </TableHead>
+                      <TableHead>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-auto p-0 font-semibold hover:bg-transparent"
+                          onClick={() => handleSort('hours')}
+                        >
+                          Horas Utilizadas
+                          {getSortIcon('hours')}
+                        </Button>
+                      </TableHead>
                       <TableHead>Horas Excedentes</TableHead>
                       <TableHead>Atend. Externos</TableHead>
-                      <TableHead>Valor Total</TableHead>
+                      <TableHead>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-auto p-0 font-semibold hover:bg-transparent"
+                          onClick={() => handleSort('value')}
+                        >
+                          Valor Total
+                          {getSortIcon('value')}
+                        </Button>
+                      </TableHead>
                       <TableHead>Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {billing.clients?.map((client) => (
+                    {getSortedClients().map((client) => (
                       <TableRow key={client.client_name}>
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedClients.includes(client.client_name)}
+                            onCheckedChange={(checked) => handleClientSelect(client.client_name, checked)}
+                          />
+                        </TableCell>
                         <TableCell>
                           <div>
                             <div className="font-medium">{client.client_name}</div>
@@ -259,7 +427,7 @@ const ReportsPage = () => {
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <Clock className="h-4 w-4 text-muted-foreground" />
-                            <span>{formatHours(client.total_hours)}</span>
+                            <span>{formatHoursToHoursMinutes(client.total_hours)}</span>
                             {client.total_hours > client.contract_hours && (
                               <Badge variant="destructive" className="text-xs">
                                 Excedeu
@@ -269,7 +437,7 @@ const ReportsPage = () => {
                         </TableCell>
                         <TableCell>
                           <span className={client.overtime_hours > 0 ? 'text-orange-600 font-medium' : ''}>
-                            {formatHours(client.overtime_hours)}
+                            {formatHoursToHoursMinutes(client.overtime_hours)}
                           </span>
                         </TableCell>
                         <TableCell>
@@ -333,11 +501,11 @@ const ReportsPage = () => {
                       </div>
                       <div>
                         <p className="text-muted-foreground">Horas Contratuais</p>
-                        <p className="font-medium">{formatHours(billing.clients[0].contract_hours)}</p>
+                        <p className="font-medium">{formatHoursToHoursMinutes(billing.clients[0].contract_hours)}</p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">Horas Utilizadas</p>
-                        <p className="font-medium">{formatHours(billing.clients[0].total_hours)}</p>
+                        <p className="font-medium">{formatHoursToHoursMinutes(billing.clients[0].total_hours)}</p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">Valor Total</p>
@@ -351,12 +519,12 @@ const ReportsPage = () => {
                       <h5 className="font-medium">Detalhamento de Custos:</h5>
                       <div className="text-sm space-y-1">
                         <div className="flex justify-between">
-                          <span>Horas contratuais ({formatHours(billing.clients[0].used_contract_hours)} × {formatCurrency(billing.clients[0].rates?.hourly_rate)}):</span>
+                          <span>Horas contratuais ({formatHoursToHoursMinutes(billing.clients[0].used_contract_hours)} × {formatCurrency(billing.clients[0].rates?.hourly_rate)}):</span>
                           <span>{formatCurrency(billing.clients[0].contract_value)}</span>
                         </div>
                         {billing.clients[0].overtime_hours > 0 && (
                           <div className="flex justify-between">
-                            <span>Horas excedentes ({formatHours(billing.clients[0].overtime_hours)} × {formatCurrency(billing.clients[0].rates?.overtime_rate)}):</span>
+                            <span>Horas excedentes ({formatHoursToHoursMinutes(billing.clients[0].overtime_hours)} × {formatCurrency(billing.clients[0].rates?.overtime_rate)}):</span>
                             <span>{formatCurrency(billing.clients[0].overtime_value)}</span>
                           </div>
                         )}
@@ -379,7 +547,7 @@ const ReportsPage = () => {
                         {billing.clients[0].tickets?.slice(0, 5).map((ticket, index) => (
                           <div key={index} className="flex justify-between border-b pb-1">
                             <span>{ticket.ticket_id} - {ticket.subject?.substring(0, 30)}...</span>
-                            <span>{formatHours(ticket.total_service_time)}</span>
+                            <span>{formatHoursToHoursMinutes(ticket.total_service_time)}</span>
                           </div>
                         ))}
                         {billing.clients[0].tickets?.length > 5 && (
