@@ -264,3 +264,182 @@ def get_tickets(month, year):
         return jsonify([ticket.to_dict() for ticket in tickets])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@billing_bp.route('/delete-period/<int:month>/<int:year>', methods=['DELETE'])
+def delete_period(month, year):
+    """Deleta todos os dados de um período específico"""
+    try:
+        # Verificar se o período existe
+        record_count = TicketData.query.filter_by(
+            processing_month=month,
+            processing_year=year
+        ).count()
+        
+        if record_count == 0:
+            return jsonify({'error': f'Nenhum dado encontrado para {month:02d}/{year}'}), 404
+        
+        # Deletar registros
+        deleted_count = TicketData.query.filter_by(
+            processing_month=month,
+            processing_year=year
+        ).delete()
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Período {month:02d}/{year} deletado com sucesso',
+            'deleted_records': deleted_count
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Erro ao deletar período: {str(e)}'}), 500
+
+@billing_bp.route('/periods', methods=['GET'])
+def get_periods():
+    """Retorna lista de períodos disponíveis"""
+    try:
+        periods_query = db.session.query(
+            TicketData.processing_month,
+            TicketData.processing_year,
+            db.func.count(TicketData.id).label('total_tickets'),
+            db.func.count(db.distinct(TicketData.client_name)).label('total_clients'),
+            db.func.max(TicketData.created_at).label('last_update')
+        ).group_by(
+            TicketData.processing_month,
+            TicketData.processing_year
+        ).order_by(
+            TicketData.processing_year.desc(),
+            TicketData.processing_month.desc()
+        ).all()
+        
+        periods_data = []
+        for period in periods_query:
+            periods_data.append({
+                'month': period.processing_month,
+                'year': period.processing_year,
+                'label': f"{period.processing_month:02d}/{period.processing_year}",
+                'total_tickets': period.total_tickets,
+                'total_clients': period.total_clients,
+                'last_update': period.last_update.isoformat() if period.last_update else None
+            })
+        
+        return jsonify(periods_data)
+        
+    except Exception as e:
+        return jsonify({'error': f'Erro ao buscar períodos: {str(e)}'}), 500
+
+@billing_bp.route('/upload-batches', methods=['GET'])
+def get_upload_batches():
+    """Retorna histórico de uploads realizados"""
+    try:
+        # Simulando dados de batches (você pode implementar uma tabela específica se necessário)
+        batches_query = db.session.query(
+            TicketData.batch_id,
+            TicketData.filename,
+            TicketData.processing_month,
+            TicketData.processing_year,
+            db.func.count(TicketData.id).label('tickets_count'),
+            db.func.max(TicketData.created_at).label('upload_date')
+        ).filter(
+            TicketData.batch_id.isnot(None)
+        ).group_by(
+            TicketData.batch_id,
+            TicketData.filename,
+            TicketData.processing_month,
+            TicketData.processing_year
+        ).order_by(
+            db.func.max(TicketData.created_at).desc()
+        ).all()
+        
+        batches_data = []
+        for batch in batches_query:
+            batches_data.append({
+                'batch_id': batch.batch_id,
+                'filename': batch.filename or 'arquivo_importado.xlsx',
+                'period': f"{batch.processing_month:02d}/{batch.processing_year}",
+                'tickets_count': batch.tickets_count,
+                'upload_date': batch.upload_date.isoformat() if batch.upload_date else None
+            })
+        
+        return jsonify({'batches': batches_data})
+        
+    except Exception as e:
+        return jsonify({'error': f'Erro ao buscar histórico de uploads: {str(e)}'}), 500
+
+@billing_bp.route('/delete-batch/<batch_id>', methods=['DELETE'])
+def delete_batch(batch_id):
+    """Deleta um lote específico de upload"""
+    try:
+        # Verificar se o batch existe
+        record_count = TicketData.query.filter_by(batch_id=batch_id).count()
+        
+        if record_count == 0:
+            return jsonify({'error': 'Lote de upload não encontrado'}), 404
+        
+        # Deletar registros
+        deleted_count = TicketData.query.filter_by(batch_id=batch_id).delete()
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Lote de upload deletado com sucesso',
+            'deleted_records': deleted_count
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Erro ao deletar lote: {str(e)}'}), 500
+
+@billing_bp.route('/system-info', methods=['GET'])
+def get_system_info():
+    """Retorna informações gerais do sistema"""
+    try:
+        # Estatísticas gerais
+        total_tickets = TicketData.query.count()
+        total_clients = Client.query.count()
+        
+        # Contar uploads únicos por batch_id
+        total_uploads = db.session.query(
+            db.func.count(db.distinct(TicketData.batch_id))
+        ).filter(
+            TicketData.batch_id.isnot(None)
+        ).scalar() or 0
+        
+        # Tamanho do banco de dados (aproximado)
+        try:
+            db_path = current_app.config['SQLALCHEMY_DATABASE_URI'].replace('sqlite:///', '')
+            if os.path.exists(db_path):
+                database_size = os.path.getsize(db_path)
+            else:
+                database_size = 0
+        except:
+            database_size = 0
+        
+        # Último backup (procurar por arquivos de backup)
+        last_backup = None
+        try:
+            db_dir = os.path.dirname(db_path)
+            backup_files = [f for f in os.listdir(db_dir) if f.startswith('app.db.backup_')]
+            if backup_files:
+                backup_files.sort(reverse=True)
+                last_backup_file = os.path.join(db_dir, backup_files[0])
+                last_backup = datetime.fromtimestamp(os.path.getmtime(last_backup_file)).isoformat()
+        except:
+            pass
+        
+        return jsonify({
+            'system_info': {
+                'total_tickets': total_tickets,
+                'total_clients': total_clients,
+                'total_uploads': total_uploads,
+                'total_reports': 0,  # Implementar contagem de PDFs se necessário
+                'database_size': database_size,
+                'last_backup': last_backup
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Erro ao buscar informações do sistema: {str(e)}'}), 500

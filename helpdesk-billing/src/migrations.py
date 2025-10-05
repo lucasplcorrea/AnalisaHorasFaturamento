@@ -308,8 +308,13 @@ def migrate_database(app):
     """Função principal para executar migrações"""
     migrator = DatabaseMigrator(app)
     
-    # Criar backup antes das migrações
-    migrator.backup_database()
-    
-    # Executar migrações
-    return migrator.run_migrations()
+    # Verificar se há migrações pendentes
+    current_version = migrator.check_database_version()
+    if current_version < 5:  # Temos migrações até versão 5
+        # Só fazer backup se há migrações pendentes
+        migrator.backup_database()
+        # Executar migrações
+        return migrator.run_migrations()
+    else:
+        # Não há migrações pendentes
+        return True

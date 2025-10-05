@@ -28,7 +28,7 @@ const ClientsPage = () => {
     setError(null)
     try {
       const response = await axios.get('/api/clients')
-      setClients(response.data)
+      setClients(response.data.clients || [])
     } catch (err) {
       setError('Erro ao carregar clientes')
     } finally {
@@ -59,7 +59,7 @@ const ClientsPage = () => {
       
       // Atualizar a lista de clientes
       setClients(clients.map(client => 
-        client.id === editingClient ? response.data : client
+        client.id === editingClient ? response.data.client : client
       ))
       
       setEditingClient(null)
