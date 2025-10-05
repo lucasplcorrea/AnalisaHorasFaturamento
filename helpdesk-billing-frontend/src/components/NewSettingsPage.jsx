@@ -9,6 +9,9 @@ import { Badge } from '@/components/ui/badge.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table.jsx'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog.jsx'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
+import { Checkbox } from '@/components/ui/checkbox.jsx'
+import { useTheme } from '@/components/ThemeProvider.jsx'
 import { 
   Upload, 
   Settings, 
@@ -22,11 +25,15 @@ import {
   Info,
   Server,
   HardDrive,
-  Users
+  Users,
+  Sun,
+  Moon,
+  Palette
 } from 'lucide-react'
 import { formatDate } from '@/lib/formatters.js'
 
 const NewSettingsPage = () => {
+  const { theme, toggleTheme } = useTheme()
   const [file, setFile] = useState(null)
   const [uploading, setUploading] = useState(false)
   const [uploadResult, setUploadResult] = useState(null)
@@ -37,6 +44,30 @@ const NewSettingsPage = () => {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [deletingPeriod, setDeletingPeriod] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  
+  // Novos estados para seleção de período
+  const [selectedMonth, setSelectedMonth] = useState('')
+  const [selectedYear, setSelectedYear] = useState('')
+  const [useManualPeriod, setUseManualPeriod] = useState(false)
+
+  // Gerar listas de meses e anos
+  const months = [
+    { value: 1, label: '01 - Janeiro' },
+    { value: 2, label: '02 - Fevereiro' },
+    { value: 3, label: '03 - Março' },
+    { value: 4, label: '04 - Abril' },
+    { value: 5, label: '05 - Maio' },
+    { value: 6, label: '06 - Junho' },
+    { value: 7, label: '07 - Julho' },
+    { value: 8, label: '08 - Agosto' },
+    { value: 9, label: '09 - Setembro' },
+    { value: 10, label: '10 - Outubro' },
+    { value: 11, label: '11 - Novembro' },
+    { value: 12, label: '12 - Dezembro' }
+  ]
+
+  const currentYear = new Date().getFullYear()
+  const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i)
 
   useEffect(() => {
     loadPeriods()
@@ -90,12 +121,23 @@ const NewSettingsPage = () => {
       return
     }
 
+    if (useManualPeriod && (!selectedMonth || !selectedYear)) {
+      setError('Por favor, selecione o mês e ano quando usar período manual')
+      return
+    }
+
     setUploading(true)
     setError(null)
     setUploadResult(null)
 
     const formData = new FormData()
     formData.append('file', file)
+    
+    // Adicionar período se especificado manualmente
+    if (useManualPeriod && selectedMonth && selectedYear) {
+      formData.append('month', selectedMonth)
+      formData.append('year', selectedYear)
+    }
 
     try {
       const response = await axios.post('/api/upload', formData, {
@@ -106,6 +148,9 @@ const NewSettingsPage = () => {
 
       setUploadResult(response.data)
       setFile(null)
+      setSelectedMonth('')
+      setSelectedYear('')
+      setUseManualPeriod(false)
       
       // Reset file input
       document.getElementById('file-input').value = ''
@@ -168,16 +213,6 @@ const NewSettingsPage = () => {
     }
   }
 
-  const downloadTemplate = () => {
-    // Criar template Excel básico
-    const link = document.createElement('a')
-    link.href = '/api/download-template'
-    link.download = 'template_importacao.xlsx'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-  }
-
   const formatFileSize = (bytes) => {
     if (bytes === 0) return '0 Bytes'
     const k = 1024
@@ -225,7 +260,7 @@ const NewSettingsPage = () => {
           <TabsTrigger value="upload">Upload de Dados</TabsTrigger>
           <TabsTrigger value="management">Gestão de Dados</TabsTrigger>
           <TabsTrigger value="batches">Histórico de Uploads</TabsTrigger>
-          <TabsTrigger value="system">Informações do Sistema</TabsTrigger>
+          <TabsTrigger value="system">Sistema e Interface</TabsTrigger>
         </TabsList>
 
         <TabsContent value="upload" className="space-y-6">
@@ -264,31 +299,86 @@ const NewSettingsPage = () => {
               </div>
 
               {file && (
-                <div className="flex items-center justify-between p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <FileText className="h-8 w-8 text-blue-600" />
-                    <div>
-                      <p className="font-medium">{file.name}</p>
-                      <p className="text-sm text-gray-500">{formatFileSize(file.size)}</p>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <FileText className="h-8 w-8 text-blue-600" />
+                      <div>
+                        <p className="font-medium">{file.name}</p>
+                        <p className="text-sm text-gray-500">{formatFileSize(file.size)}</p>
+                      </div>
                     </div>
                   </div>
-                  <Button
-                    onClick={handleUpload}
-                    disabled={uploading}
-                    className="min-w-32"
-                  >
-                    {uploading ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Processando...
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="h-4 w-4 mr-2" />
-                        Processar Arquivo
-                      </>
+
+                  {/* Seleção de período */}
+                  <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg space-y-4">
+                    <div className="flex items-center space-x-2">
+                      <Checkbox 
+                        id="manual-period" 
+                        checked={useManualPeriod}
+                        onCheckedChange={setUseManualPeriod}
+                      />
+                      <Label htmlFor="manual-period">
+                        Especificar período manualmente (caso contrário será detectado automaticamente)
+                      </Label>
+                    </div>
+
+                    {useManualPeriod && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label htmlFor="month-select">Mês</Label>
+                          <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+                            <SelectTrigger id="month-select">
+                              <SelectValue placeholder="Selecione o mês" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {months.map((month) => (
+                                <SelectItem key={month.value} value={month.value.toString()}>
+                                  {month.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div>
+                          <Label htmlFor="year-select">Ano</Label>
+                          <Select value={selectedYear} onValueChange={setSelectedYear}>
+                            <SelectTrigger id="year-select">
+                              <SelectValue placeholder="Selecione o ano" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {years.map((year) => (
+                                <SelectItem key={year} value={year.toString()}>
+                                  {year}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
                     )}
-                  </Button>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button
+                      onClick={handleUpload}
+                      disabled={uploading}
+                      className="min-w-32"
+                    >
+                      {uploading ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Processando...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="h-4 w-4 mr-2" />
+                          Processar Arquivo
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
               )}
 
@@ -307,13 +397,6 @@ const NewSettingsPage = () => {
                     </ul>
                   </div>
                 </div>
-              </div>
-
-              <div className="flex justify-center">
-                <Button variant="outline" onClick={downloadTemplate}>
-                  <Download className="h-4 w-4 mr-2" />
-                  Baixar Template de Exemplo
-                </Button>
               </div>
             </CardContent>
           </Card>
@@ -446,92 +529,173 @@ const NewSettingsPage = () => {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Server className="h-5 w-5" />
-                Informações do Sistema
+                Sistema e Interface
               </CardTitle>
               <CardDescription>
-                Status e estatísticas gerais do sistema de faturamento
+                Informações do sistema, estatísticas gerais e configurações de interface
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <Database className="h-8 w-8 text-blue-600" />
-                    <div>
-                      <p className="text-sm text-muted-foreground">Total de Tickets</p>
-                      <p className="text-2xl font-bold">{systemInfo.total_tickets || 0}</p>
+            <CardContent className="space-y-8">
+              {/* Estatísticas do Sistema */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Estatísticas do Sistema</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <Database className="h-8 w-8 text-blue-600" />
+                      <div>
+                        <p className="text-sm text-muted-foreground">Total de Tickets</p>
+                        <p className="text-2xl font-bold">{systemInfo.total_tickets || 0}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <Users className="h-8 w-8 text-green-600" />
+                      <div>
+                        <p className="text-sm text-muted-foreground">Total de Clientes</p>
+                        <p className="text-2xl font-bold">{systemInfo.total_clients || 0}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-orange-50 dark:bg-orange-900/20 p-4 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <HardDrive className="h-8 w-8 text-orange-600" />
+                      <div>
+                        <p className="text-sm text-muted-foreground">Tamanho do BD</p>
+                        <p className="text-2xl font-bold">
+                          {systemInfo.database_size ? formatFileSize(systemInfo.database_size) : 'N/A'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <Upload className="h-8 w-8 text-purple-600" />
+                      <div>
+                        <p className="text-sm text-muted-foreground">Uploads Realizados</p>
+                        <p className="text-2xl font-bold">{systemInfo.total_uploads || 0}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <FileText className="h-8 w-8 text-yellow-600" />
+                      <div>
+                        <p className="text-sm text-muted-foreground">PDFs Gerados</p>
+                        <p className="text-2xl font-bold">{systemInfo.total_reports || 0}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <Settings className="h-8 w-8 text-gray-600" />
+                      <div>
+                        <p className="text-sm text-muted-foreground">Versão do Sistema</p>
+                        <p className="text-2xl font-bold">v2.0</p>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <Users className="h-8 w-8 text-green-600" />
-                    <div>
-                      <p className="text-sm text-muted-foreground">Total de Clientes</p>
-                      <p className="text-2xl font-bold">{systemInfo.total_clients || 0}</p>
+                {systemInfo.last_backup && (
+                  <div className="mt-6 p-4 bg-green-50 dark:bg-green-900/20 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <CheckCircle className="h-5 w-5 text-green-600" />
+                      <div>
+                        <p className="font-medium text-green-800 dark:text-green-200">
+                          Último backup realizado em: {formatDate(systemInfo.last_backup)}
+                        </p>
+                        <p className="text-sm text-green-700 dark:text-green-300">
+                          Dados protegidos e atualizados
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
+              </div>
 
-                <div className="bg-orange-50 dark:bg-orange-900/20 p-4 rounded-lg">
+              {/* Configurações de Interface */}
+              <div className="space-y-4 border-t pt-6">
+                <h3 className="text-lg font-semibold">Configurações de Interface</h3>
+                
+                {/* Tema */}
+                <div className="flex items-center justify-between p-4 border rounded-lg">
                   <div className="flex items-center gap-3">
-                    <HardDrive className="h-8 w-8 text-orange-600" />
+                    {theme === 'light' ? (
+                      <Sun className="h-6 w-6 text-yellow-500" />
+                    ) : (
+                      <Moon className="h-6 w-6 text-blue-500" />
+                    )}
                     <div>
-                      <p className="text-sm text-muted-foreground">Tamanho do BD</p>
-                      <p className="text-2xl font-bold">
-                        {systemInfo.database_size ? formatFileSize(systemInfo.database_size) : 'N/A'}
+                      <p className="font-medium">
+                        Tema {theme === 'light' ? 'Claro' : 'Escuro'}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {theme === 'light' 
+                          ? 'Interface clara com fundo branco' 
+                          : 'Interface escura com fundo preto'
+                        }
                       </p>
                     </div>
                   </div>
-                </div>
-
-                <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <Upload className="h-8 w-8 text-purple-600" />
-                    <div>
-                      <p className="text-sm text-muted-foreground">Uploads Realizados</p>
-                      <p className="text-2xl font-bold">{systemInfo.total_uploads || 0}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <FileText className="h-8 w-8 text-yellow-600" />
-                    <div>
-                      <p className="text-sm text-muted-foreground">PDFs Gerados</p>
-                      <p className="text-2xl font-bold">{systemInfo.total_reports || 0}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <Settings className="h-8 w-8 text-gray-600" />
-                    <div>
-                      <p className="text-sm text-muted-foreground">Versão do Sistema</p>
-                      <p className="text-2xl font-bold">v2.0</p>
-                    </div>
-                  </div>
+                  <Button onClick={toggleTheme} variant="outline">
+                    {theme === 'light' ? (
+                      <>
+                        <Moon className="h-4 w-4 mr-2" />
+                        Mudar para Escuro
+                      </>
+                    ) : (
+                      <>
+                        <Sun className="h-4 w-4 mr-2" />
+                        Mudar para Claro
+                      </>
+                    )}
+                  </Button>
                 </div>
               </div>
 
-              {systemInfo.last_backup && (
-                <div className="mt-6 p-4 bg-green-50 dark:bg-green-900/20 rounded-lg">
+              {/* Sobre o Sistema */}
+              <div className="space-y-4 border-t pt-6">
+                <h3 className="text-lg font-semibold">Sobre o Sistema</h3>
+                <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg space-y-4">
                   <div className="flex items-center gap-3">
-                    <CheckCircle className="h-5 w-5 text-green-600" />
-                    <div>
-                      <p className="font-medium text-green-800 dark:text-green-200">
-                        Último backup realizado em: {formatDate(systemInfo.last_backup)}
-                      </p>
-                      <p className="text-sm text-green-700 dark:text-green-300">
-                        Dados protegidos e atualizados
-                      </p>
+                    <Info className="h-5 w-5 text-blue-600" />
+                    <h4 className="font-medium">Sistema de Faturamento Helpdesk v2.0</h4>
+                  </div>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    Sistema desenvolvido para automatizar o processo de faturamento baseado em dados 
+                    de tickets de helpdesk. Permite importação de relatórios Excel, cálculo automático 
+                    de horas, geração de PDFs de faturamento e análise de performance.
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                    <div className="text-center p-3 bg-white dark:bg-gray-700 rounded-lg">
+                      <p className="text-lg font-bold text-blue-600">React</p>
+                      <p className="text-xs text-muted-foreground">Frontend</p>
+                    </div>
+                    <div className="text-center p-3 bg-white dark:bg-gray-700 rounded-lg">
+                      <p className="text-lg font-bold text-green-600">Flask</p>
+                      <p className="text-xs text-muted-foreground">Backend</p>
+                    </div>
+                    <div className="text-center p-3 bg-white dark:bg-gray-700 rounded-lg">
+                      <p className="text-lg font-bold text-orange-600">SQLite</p>
+                      <p className="text-xs text-muted-foreground">Database</p>
+                    </div>
+                    <div className="text-center p-3 bg-white dark:bg-gray-700 rounded-lg">
+                      <p className="text-lg font-bold text-purple-600">Python</p>
+                      <p className="text-xs text-muted-foreground">Analytics</p>
                     </div>
                   </div>
+                  <div className="text-center text-xs text-muted-foreground border-t pt-3 mt-4">
+                    Última atualização: Outubro 2025
+                  </div>
                 </div>
-              )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

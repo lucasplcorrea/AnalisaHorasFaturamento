@@ -7,7 +7,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table.jsx'
-import { Loader2, AlertCircle, UserCheck, Clock, BarChart3, TrendingUp, Users, Award } from 'lucide-react'
+import { Loader2, AlertCircle, UserCheck, Clock, BarChart3, TrendingUp, Users, Award, Info } from 'lucide-react'
 import { formatHoursToHoursMinutes, formatCurrency, formatDate } from '@/lib/formatters.js'
 
 const NewAnalystsPage = () => {
@@ -18,6 +18,11 @@ const NewAnalystsPage = () => {
   const [analystDetails, setAnalystDetails] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [sortBy, setSortBy] = useState('ticket_count') // nova ordenação
+  const [comparisonMode, setComparisonMode] = useState('tickets') // nova modalidade de comparativo
+  const [ticketTableSort, setTicketTableSort] = useState('time_desc') // ordenação da tabela de tickets
+  const [ticketTablePage, setTicketTablePage] = useState(1) // página atual da tabela
+  const [ticketsPerPage] = useState(10) // tickets por página
 
   useEffect(() => {
     loadPeriods()
@@ -34,6 +39,7 @@ const NewAnalystsPage = () => {
     if (selectedAnalyst && selectedPeriod) {
       const [month, year] = selectedPeriod.split('/')
       loadAnalystDetails(selectedAnalyst, parseInt(month), parseInt(year))
+      setTicketTablePage(1) // resetar página quando analista muda
     }
   }, [selectedAnalyst, selectedPeriod])
 
@@ -78,17 +84,78 @@ const NewAnalystsPage = () => {
   }
 
   const getPerformanceLevel = (analyst, allAnalysts) => {
-    const avgTickets = allAnalysts.reduce((sum, a) => sum + a.ticket_count, 0) / allAnalysts.length
-    const avgHours = allAnalysts.reduce((sum, a) => sum + a.total_hours, 0) / allAnalysts.length
+    const totalHours = analyst.total_hours || 0
     
-    if (analyst.ticket_count > avgTickets * 1.2 && analyst.total_hours > avgHours * 1.1) {
-      return { level: 'Excelente', color: 'bg-green-100 text-green-800', icon: '🏆' }
-    } else if (analyst.ticket_count > avgTickets) {
-      return { level: 'Bom', color: 'bg-blue-100 text-blue-800', icon: '⭐' }
-    } else if (analyst.ticket_count > avgTickets * 0.8) {
-      return { level: 'Regular', color: 'bg-yellow-100 text-yellow-800', icon: '📊' }
+    // Critérios de Performance baseados em horas trabalhadas:
+    // Excelente: Acima de 140 horas no período
+    // Bom: Entre 120 e 140 horas no período  
+    // Regular: Entre 100 e 120 horas no período
+    // Abaixo da Média: Menos de 100 horas no período
+    
+    if (totalHours >= 140) {
+      return { 
+        level: 'Excelente', 
+        color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200', 
+        icon: '🏆',
+        description: 'Acima de 140 horas trabalhadas'
+      }
+    } else if (totalHours >= 120) {
+      return { 
+        level: 'Bom', 
+        color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200', 
+        icon: '⭐',
+        description: 'Entre 120 e 140 horas trabalhadas'
+      }
+    } else if (totalHours >= 100) {
+      return { 
+        level: 'Regular', 
+        color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200', 
+        icon: '📊',
+        description: 'Entre 100 e 120 horas trabalhadas'
+      }
     } else {
-      return { level: 'Abaixo da Média', color: 'bg-gray-100 text-gray-800', icon: '📈' }
+      return { 
+        level: 'Abaixo da Média', 
+        color: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200', 
+        icon: '📈',
+        description: 'Menos de 100 horas trabalhadas'
+      }
+    }
+  }
+
+  const getSortedTickets = (tickets, sortBy) => {
+    if (!tickets) return []
+    
+    const sorted = [...tickets]
+    switch (sortBy) {
+      case 'time_desc':
+        return sorted.sort((a, b) => (b.total_service_time || 0) - (a.total_service_time || 0))
+      case 'time_asc':
+        return sorted.sort((a, b) => (a.total_service_time || 0) - (b.total_service_time || 0))
+      case 'ticket_id':
+        return sorted.sort((a, b) => a.ticket_id.localeCompare(b.ticket_id))
+      case 'client_name':
+        return sorted.sort((a, b) => a.client_name.localeCompare(b.client_name))
+      case 'external_first':
+        return sorted.sort((a, b) => (b.external_service ? 1 : 0) - (a.external_service ? 1 : 0))
+      default:
+        return sorted.sort((a, b) => (b.total_service_time || 0) - (a.total_service_time || 0))
+    }
+  }
+
+  const getSortedAnalysts = (analysts, sortBy) => {
+    if (!analysts) return []
+    
+    const sorted = [...analysts]
+    switch (sortBy) {
+      case 'ticket_count':
+        return sorted.sort((a, b) => b.ticket_count - a.ticket_count)
+      case 'total_hours':
+        return sorted.sort((a, b) => b.total_hours - a.total_hours)
+      case 'avg_hours_per_ticket':
+        return sorted.sort((a, b) => a.avg_hours_per_ticket - b.avg_hours_per_ticket) // menor é melhor
+      default:
+        return sorted.sort((a, b) => b.ticket_count - a.ticket_count)
     }
   }
 
@@ -206,63 +273,100 @@ const NewAnalystsPage = () => {
             {/* Ranking dos Analistas */}
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Award className="h-5 w-5" />
-                  Ranking de Performance - {selectedPeriod}
-                </CardTitle>
-                <CardDescription>
-                  Classificação dos analistas por performance no período
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {technicianData.performance_data?.map((analyst, index) => {
-                    const performance = getPerformanceLevel(analyst, technicianData.performance_data)
-                    return (
-                      <div 
-                        key={analyst.technician} 
-                        className={`p-4 rounded-lg border cursor-pointer transition-all ${
-                          selectedAnalyst === analyst.technician 
-                            ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20' 
-                            : 'hover:bg-gray-50 dark:hover:bg-gray-800'
-                        }`}
-                        onClick={() => setSelectedAnalyst(analyst.technician)}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4">
-                            <div className="text-2xl font-bold text-blue-600">#{index + 1}</div>
-                            <div>
-                              <div className="font-semibold text-lg">{analyst.technician}</div>
-                              <div className="flex items-center gap-2 mt-1">
-                                <Badge className={performance.color}>
-                                  {performance.icon} {performance.level}
-                                </Badge>
-                              </div>
-                            </div>
-                          </div>
-                          
-                          <div className="grid grid-cols-3 gap-8 text-center">
-                            <div>
-                              <div className="text-2xl font-bold text-blue-600">{analyst.ticket_count}</div>
-                              <div className="text-xs text-muted-foreground">Chamados</div>
-                            </div>
-                            <div>
-                              <div className="text-2xl font-bold text-green-600">
-                                {formatHoursToHoursMinutes(analyst.total_hours)}
-                              </div>
-                              <div className="text-xs text-muted-foreground">Horas</div>
-                            </div>
-                            <div>
-                              <div className="text-2xl font-bold text-orange-600">
-                                {formatHoursToHoursMinutes(analyst.avg_hours_per_ticket)}
-                              </div>
-                              <div className="text-xs text-muted-foreground">Média/Chamado</div>
-                            </div>
-                          </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Award className="h-5 w-5" />
+                      Ranking de Performance - {selectedPeriod}
+                    </CardTitle>
+                    <CardDescription>
+                      Classificação dos analistas por performance no período
+                      <div className="flex items-center gap-2 mt-2 p-2 bg-muted rounded-lg">
+                        <Info className="h-4 w-4 text-muted-foreground" />
+                        <div className="text-xs">
+                          <strong>Critérios por Horas:</strong> 🏆 Excelente (140h+) | ⭐ Bom (120-140h) | 📊 Regular (100-120h) | 📈 Abaixo da média (&lt;100h)
                         </div>
                       </div>
-                    )
-                  })}
+                    </CardDescription>
+                  </div>
+                  <Select value={sortBy} onValueChange={setSortBy}>
+                    <SelectTrigger className="w-48">
+                      <SelectValue placeholder="Ordenar por" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ticket_count">Número de Chamados</SelectItem>
+                      <SelectItem value="total_hours">Horas Trabalhadas</SelectItem>
+                      <SelectItem value="avg_hours_per_ticket">Média por Chamado</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Pos.</TableHead>
+                        <TableHead>Analista</TableHead>
+                        <TableHead>Chamados</TableHead>
+                        <TableHead>Horas Totais</TableHead>
+                        <TableHead>Deslocamentos</TableHead>
+                        <TableHead>Média/Chamado</TableHead>
+                        <TableHead>Performance</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {getSortedAnalysts(technicianData.performance_data, sortBy)?.map((analyst, index) => {
+                        const performance = getPerformanceLevel(analyst, technicianData.performance_data)
+                        return (
+                          <TableRow 
+                            key={analyst.technician}
+                            className={`cursor-pointer transition-all ${
+                              selectedAnalyst === analyst.technician 
+                                ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20' 
+                                : 'hover:bg-gray-50 dark:hover:bg-gray-800'
+                            }`}
+                            onClick={() => setSelectedAnalyst(analyst.technician)}
+                          >
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-blue-600">#{index + 1}</span>
+                                {index < 3 && (
+                                  <span className="text-lg">
+                                    {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}
+                                  </span>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="font-semibold text-lg">{analyst.technician}</div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="text-lg font-semibold text-blue-600">{analyst.ticket_count}</div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="text-lg font-semibold text-green-600">
+                                {formatHoursToHoursMinutes(analyst.total_hours)}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="text-lg font-semibold text-purple-600">{analyst.external_services_count || 0}</div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="text-lg font-semibold text-orange-600">
+                                {formatHoursToHoursMinutes(analyst.avg_hours_per_ticket)}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge className={performance.color}>
+                                {performance.icon} {performance.level}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
                 </div>
               </CardContent>
             </Card>
@@ -293,7 +397,7 @@ const NewAnalystsPage = () => {
                   const performance = getPerformanceLevel(analyst, technicianData.performance_data)
                   
                   return (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
                       <Card>
                         <CardHeader className="pb-3">
                           <CardTitle className="text-lg">{selectedAnalyst}</CardTitle>
@@ -353,6 +457,21 @@ const NewAnalystsPage = () => {
                           </p>
                         </CardContent>
                       </Card>
+
+                      <Card>
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                          <CardTitle className="text-sm font-medium">Deslocamentos</CardTitle>
+                          <UserCheck className="h-4 w-4 text-muted-foreground" />
+                        </CardHeader>
+                        <CardContent>
+                          <div className="text-2xl font-bold text-purple-600">
+                            {analyst?.external_services_count || 0}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Atendimentos externos
+                          </p>
+                        </CardContent>
+                      </Card>
                     </div>
                   )
                 })()}
@@ -361,10 +480,26 @@ const NewAnalystsPage = () => {
                 {analystDetails && (
                   <Card>
                     <CardHeader>
-                      <CardTitle>Chamados Atendidos por {selectedAnalyst}</CardTitle>
-                      <CardDescription>
-                        Detalhamento dos chamados no período {selectedPeriod}
-                      </CardDescription>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <CardTitle>Chamados Atendidos por {selectedAnalyst}</CardTitle>
+                          <CardDescription>
+                            Detalhamento dos chamados no período {selectedPeriod}
+                          </CardDescription>
+                        </div>
+                        <Select value={ticketTableSort} onValueChange={setTicketTableSort}>
+                          <SelectTrigger className="w-48">
+                            <SelectValue placeholder="Ordenar por" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="time_desc">Tempo (Maior → Menor)</SelectItem>
+                            <SelectItem value="time_asc">Tempo (Menor → Maior)</SelectItem>
+                            <SelectItem value="ticket_id">ID do Ticket</SelectItem>
+                            <SelectItem value="client_name">Cliente</SelectItem>
+                            <SelectItem value="external_first">Deslocamentos Primeiro</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </CardHeader>
                     <CardContent>
                       <div className="overflow-x-auto">
@@ -375,27 +510,67 @@ const NewAnalystsPage = () => {
                               <TableHead>Cliente</TableHead>
                               <TableHead>Assunto</TableHead>
                               <TableHead>Tempo Gasto</TableHead>
+                              <TableHead>Tipo</TableHead>
                               <TableHead>Status</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {analystDetails.tickets?.slice(0, 10).map((ticket) => (
-                              <TableRow key={ticket.ticket_id}>
-                                <TableCell className="font-medium">{ticket.ticket_id}</TableCell>
-                                <TableCell>{ticket.client_name}</TableCell>
-                                <TableCell className="max-w-xs truncate">{ticket.subject || '-'}</TableCell>
-                                <TableCell>{formatHoursToHoursMinutes(ticket.total_service_time)}</TableCell>
-                                <TableCell>
-                                  <Badge variant="outline">{ticket.status || 'N/A'}</Badge>
-                                </TableCell>
-                              </TableRow>
-                            ))}
+                            {(() => {
+                              const sortedTickets = getSortedTickets(analystDetails.tickets, ticketTableSort)
+                              const startIndex = (ticketTablePage - 1) * ticketsPerPage
+                              const endIndex = startIndex + ticketsPerPage
+                              const paginatedTickets = sortedTickets.slice(startIndex, endIndex)
+                              
+                              return paginatedTickets.map((ticket) => (
+                                <TableRow key={ticket.ticket_id}>
+                                  <TableCell className="font-medium">{ticket.ticket_id}</TableCell>
+                                  <TableCell>{ticket.client_name}</TableCell>
+                                  <TableCell className="max-w-xs truncate">{ticket.subject || '-'}</TableCell>
+                                  <TableCell>{formatHoursToHoursMinutes(ticket.total_service_time)}</TableCell>
+                                  <TableCell>
+                                    {ticket.external_service ? (
+                                      <Badge className="bg-purple-100 text-purple-800">Deslocamento</Badge>
+                                    ) : (
+                                      <Badge variant="outline">Interno</Badge>
+                                    )}
+                                  </TableCell>
+                                  <TableCell>
+                                    <Badge variant="outline">{ticket.status || 'N/A'}</Badge>
+                                  </TableCell>
+                                </TableRow>
+                              ))
+                            })()}
                           </TableBody>
                         </Table>
                       </div>
-                      {analystDetails.tickets?.length > 10 && (
-                        <div className="text-center mt-4 text-sm text-muted-foreground">
-                          Mostrando 10 de {analystDetails.tickets.length} chamados
+                      
+                      {/* Paginação */}
+                      {analystDetails.tickets?.length > ticketsPerPage && (
+                        <div className="flex items-center justify-between mt-4">
+                          <div className="text-sm text-muted-foreground">
+                            Mostrando {((ticketTablePage - 1) * ticketsPerPage) + 1} a {Math.min(ticketTablePage * ticketsPerPage, analystDetails.tickets.length)} de {analystDetails.tickets.length} chamados
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setTicketTablePage(Math.max(1, ticketTablePage - 1))}
+                              disabled={ticketTablePage === 1}
+                            >
+                              Anterior
+                            </Button>
+                            <span className="text-sm">
+                              Página {ticketTablePage} de {Math.ceil(analystDetails.tickets.length / ticketsPerPage)}
+                            </span>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setTicketTablePage(Math.min(Math.ceil(analystDetails.tickets.length / ticketsPerPage), ticketTablePage + 1))}
+                              disabled={ticketTablePage >= Math.ceil(analystDetails.tickets.length / ticketsPerPage)}
+                            >
+                              Próxima
+                            </Button>
+                          </div>
                         </div>
                       )}
                     </CardContent>
@@ -408,10 +583,30 @@ const NewAnalystsPage = () => {
           <TabsContent value="comparison" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Comparativo de Performance</CardTitle>
-                <CardDescription>
-                  Análise comparativa entre todos os analistas no período
-                </CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Comparativo de Performance</CardTitle>
+                    <CardDescription>
+                      Análise comparativa entre todos os analistas no período
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant={comparisonMode === 'tickets' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setComparisonMode('tickets')}
+                    >
+                      Por Chamados
+                    </Button>
+                    <Button
+                      variant={comparisonMode === 'hours' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setComparisonMode('hours')}
+                    >
+                      Por Horas
+                    </Button>
+                  </div>
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">
@@ -422,16 +617,23 @@ const NewAnalystsPage = () => {
                         <TableHead>Analista</TableHead>
                         <TableHead>Chamados</TableHead>
                         <TableHead>Horas Totais</TableHead>
+                        <TableHead>Deslocamentos</TableHead>
                         <TableHead>Média/Chamado</TableHead>
                         <TableHead>Performance</TableHead>
                         <TableHead>% do Total</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {technicianData.performance_data?.map((analyst, index) => {
+                      {getSortedAnalysts(
+                        technicianData.performance_data, 
+                        comparisonMode === 'tickets' ? 'ticket_count' : 'total_hours'
+                      )?.map((analyst, index) => {
                         const performance = getPerformanceLevel(analyst, technicianData.performance_data)
-                        const totalTickets = technicianData.performance_data.reduce((sum, a) => sum + a.ticket_count, 0)
-                        const percentage = ((analyst.ticket_count / totalTickets) * 100).toFixed(1)
+                        const totalBase = comparisonMode === 'tickets' 
+                          ? technicianData.performance_data.reduce((sum, a) => sum + a.ticket_count, 0)
+                          : technicianData.performance_data.reduce((sum, a) => sum + a.total_hours, 0)
+                        const analystValue = comparisonMode === 'tickets' ? analyst.ticket_count : analyst.total_hours
+                        const percentage = ((analystValue / totalBase) * 100).toFixed(1)
                         
                         return (
                           <TableRow key={analyst.technician}>
@@ -447,11 +649,18 @@ const NewAnalystsPage = () => {
                             </TableCell>
                             <TableCell className="font-medium">{analyst.technician}</TableCell>
                             <TableCell>
-                              <div className="text-lg font-semibold">{analyst.ticket_count}</div>
+                              <div className={`text-lg font-semibold ${comparisonMode === 'tickets' ? 'text-blue-600' : ''}`}>
+                                {analyst.ticket_count}
+                              </div>
                             </TableCell>
                             <TableCell>
-                              <div className="text-lg font-semibold text-green-600">
+                              <div className={`text-lg font-semibold ${comparisonMode === 'hours' ? 'text-green-600' : 'text-green-600'}`}>
                                 {formatHoursToHoursMinutes(analyst.total_hours)}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="text-lg font-semibold text-purple-600">
+                                {analyst.external_services_count || 0}
                               </div>
                             </TableCell>
                             <TableCell>
@@ -468,7 +677,7 @@ const NewAnalystsPage = () => {
                               <div className="text-sm font-medium">{percentage}%</div>
                               <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
                                 <div 
-                                  className="bg-blue-600 h-2 rounded-full" 
+                                  className={`h-2 rounded-full ${comparisonMode === 'tickets' ? 'bg-blue-600' : 'bg-green-600'}`}
                                   style={{ width: `${percentage}%` }}
                                 ></div>
                               </div>

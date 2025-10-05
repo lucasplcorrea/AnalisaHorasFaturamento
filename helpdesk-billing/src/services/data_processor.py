@@ -201,15 +201,28 @@ class DataProcessor:
     
     def _infer_period_from_data(self, df: pd.DataFrame) -> Tuple[int | None, int | None]:
         """Infere o mês e ano dos dados baseado nas datas de finalização"""
-        if 'completion_date' in df.columns:
-            valid_dates = df['completion_date'].dropna()
-            if not valid_dates.empty:
-                most_recent = valid_dates.max()
-                return most_recent.month, most_recent.year
+        # Tentar diferentes colunas de data
+        date_columns = ['completion_date', 'departure_date', 'arrival_date']
         
-        return None, None
+        for col in date_columns:
+            if col in df.columns:
+                valid_dates = df[col].dropna()
+                if not valid_dates.empty:
+                    # Pegar a data mais frequente ou mais recente
+                    try:
+                        most_recent = valid_dates.max()
+                        if pd.notna(most_recent):
+                            return most_recent.month, most_recent.year
+                    except:
+                        continue
+        
+        # Se não conseguir inferir, usar mês/ano atual como fallback
+        from datetime import datetime
+        now = datetime.now()
+        logger.warning("Não foi possível inferir período dos dados, usando mês/ano atual")
+        return now.month, now.year
     
-    def _process_and_save_data(self, df: pd.DataFrame, month: int | None, year: int | None, batch_id: str) -> List[Dict]:
+    def _process_and_save_data(self, df: pd.DataFrame, month: int | None, year: int | None, batch_id: str, filename: str = None) -> List[Dict]:
         """Processa e salva os dados no banco de dados de forma otimizada"""
         processed_data = []
         

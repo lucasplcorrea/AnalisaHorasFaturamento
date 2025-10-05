@@ -90,22 +90,12 @@ const Sidebar = ({ activeTab, onTabChange }) => {
 
       {/* Footer */}
       <div className="p-2 border-t border-gray-200 dark:border-gray-700">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={toggleTheme}
-          className={cn(
-            "w-full justify-start h-10",
-            collapsed ? "px-2" : "px-3"
-          )}
-        >
-          {theme === 'light' ? (
-            <Moon className={cn("h-4 w-4", collapsed ? "mx-auto" : "mr-2")} />
-          ) : (
-            <Sun className={cn("h-4 w-4", collapsed ? "mx-auto" : "mr-2")} />
-          )}
-          {!collapsed && <span>Tema {theme === 'light' ? 'Escuro' : 'Claro'}</span>}
-        </Button>
+        <div className={cn(
+          "text-xs text-gray-500 dark:text-gray-400 text-center",
+          collapsed ? "px-1" : "px-3"
+        )}>
+          {!collapsed && "Helpdesk v2.0"}
+        </div>
       </div>
     </div>
   )

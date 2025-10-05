@@ -100,7 +100,8 @@ def get_technician_performance(month, year):
         technician_stats = db.session.query(
             TicketData.technician,
             func.count(TicketData.id).label('ticket_count'),
-            func.sum(TicketData.total_service_time).label('total_hours')
+            func.sum(TicketData.total_service_time).label('total_hours'),
+            func.sum(db.case((TicketData.external_service == True, 1), else_=0)).label('external_services_count')
         ).filter(
             TicketData.processing_month == month,
             TicketData.processing_year == year,
@@ -113,7 +114,8 @@ def get_technician_performance(month, year):
                 'technician': stat.technician,
                 'ticket_count': stat.ticket_count,
                 'total_hours': round(stat.total_hours or 0, 2),
-                'avg_hours_per_ticket': round((stat.total_hours or 0) / stat.ticket_count, 2) if stat.ticket_count > 0 else 0
+                'avg_hours_per_ticket': round((stat.total_hours or 0) / stat.ticket_count, 2) if stat.ticket_count > 0 else 0,
+                'external_services_count': int(stat.external_services_count or 0)
             })
         
         # Ordenar por número de tickets (decrescente)
@@ -122,6 +124,58 @@ def get_technician_performance(month, year):
         return jsonify({
             'performance_data': performance_data,
             'period': f"{month:02d}/{year}"
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Erro interno do servidor: {str(e)}'}), 500
+
+@analytics_bp.route('/technician-details/<string:technician_name>/<int:month>/<int:year>', methods=['GET'])
+def get_technician_details(technician_name, month, year):
+    """Obter detalhes específicos de um técnico incluindo lista de tickets"""
+    try:
+        from urllib.parse import unquote
+        
+        # Decodificar o nome do técnico (caso tenha caracteres especiais)
+        decoded_technician_name = unquote(technician_name)
+        
+        # Buscar tickets específicos do técnico
+        tickets = TicketData.query.filter(
+            TicketData.processing_month == month,
+            TicketData.processing_year == year,
+            TicketData.technician == decoded_technician_name
+        ).order_by(TicketData.created_at.desc()).all()
+        
+        # Calcular estatísticas resumidas
+        ticket_count = len(tickets)
+        total_hours = sum(ticket.total_service_time or 0 for ticket in tickets)
+        avg_hours_per_ticket = total_hours / ticket_count if ticket_count > 0 else 0
+        external_services_count = sum(1 for ticket in tickets if ticket.external_service == True)
+        
+        # Converter tickets para JSON
+        tickets_data = []
+        for ticket in tickets:
+            tickets_data.append({
+                'ticket_id': ticket.ticket_id,
+                'client_name': ticket.client_name,
+                'subject': ticket.subject,
+                'total_service_time': ticket.total_service_time or 0,
+                'status': ticket.status,
+                'external_service': ticket.external_service or False,
+                'created_at': ticket.created_at.isoformat() if ticket.created_at else None,
+                'priority': getattr(ticket, 'priority', None),
+                'category': getattr(ticket, 'category', None)
+            })
+        
+        return jsonify({
+            'technician': decoded_technician_name,
+            'period': f"{month:02d}/{year}",
+            'summary': {
+                'ticket_count': ticket_count,
+                'total_hours': round(total_hours, 2),
+                'avg_hours_per_ticket': round(avg_hours_per_ticket, 2),
+                'external_services_count': external_services_count
+            },
+            'tickets': tickets_data
         })
         
     except Exception as e:
