@@ -5,7 +5,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
-import { Loader2, AlertCircle, TrendingUp, Calendar, Clock, Users, BarChart3, PieChart } from 'lucide-react'
+import { Button } from '@/components/ui/button.jsx'
+import { Input } from '@/components/ui/input.jsx'
+import { Label } from '@/components/ui/label.jsx'
+import { Loader2, AlertCircle, TrendingUp, Calendar, Clock, Users, BarChart3, PieChart, Filter, Download, RefreshCw } from 'lucide-react'
 import { formatHoursToHoursMinutes, formatCurrency, formatDate, formatDateWithWeekday } from '@/lib/formatters.js'
 
 const NewAnalyticsPage = () => {
@@ -17,6 +20,18 @@ const NewAnalyticsPage = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [hoveredDay, setHoveredDay] = useState(null)
+  
+  // Novos estados para filtros
+  const [filters, setFilters] = useState({
+    clientFilter: '',
+    technicianFilter: '',
+    minHours: '',
+    maxHours: '',
+    showExternalOnly: false
+  })
+  const [availableClients, setAvailableClients] = useState([])
+  const [availableTechnicians, setAvailableTechnicians] = useState([])
+  const [filteredData, setFilteredData] = useState(null)
 
   useEffect(() => {
     loadPeriods()
@@ -54,11 +69,94 @@ const NewAnalyticsPage = () => {
       setHeatmapData(heatmapResponse.data)
       setTechnicianData(technicianResponse.data)
       setChartsData(chartsResponse.data)
+      
+      // Extrair listas de clientes e técnicos únicos para filtros
+      const clients = new Set()
+      const technicians = new Set()
+      
+      if (technicianResponse.data.performance_data) {
+        technicianResponse.data.performance_data.forEach(tech => {
+          technicians.add(tech.technician)
+        })
+      }
+      
+      if (chartsResponse.data.client_data) {
+        chartsResponse.data.client_data.forEach(client => {
+          clients.add(client.client_name)
+        })
+      }
+      
+      setAvailableClients(Array.from(clients).sort())
+      setAvailableTechnicians(Array.from(technicians).sort())
+      
     } catch (err) {
       setError('Erro ao carregar dados de analytics')
     } finally {
       setLoading(false)
     }
+  }
+
+  // Função para aplicar filtros
+  const applyFilters = () => {
+    if (!technicianData || !chartsData) return null
+
+    let filteredTechnicians = technicianData.performance_data || []
+    let filteredClients = chartsData.client_data || []
+
+    // Filtro por técnico
+    if (filters.technicianFilter) {
+      filteredTechnicians = filteredTechnicians.filter(tech => 
+        tech.technician.toLowerCase().includes(filters.technicianFilter.toLowerCase())
+      )
+    }
+
+    // Filtro por cliente
+    if (filters.clientFilter) {
+      filteredClients = filteredClients.filter(client =>
+        client.client_name.toLowerCase().includes(filters.clientFilter.toLowerCase())
+      )
+    }
+
+    // Filtro por horas mínimas
+    if (filters.minHours) {
+      filteredTechnicians = filteredTechnicians.filter(tech =>
+        tech.total_hours >= parseFloat(filters.minHours)
+      )
+    }
+
+    // Filtro por horas máximas
+    if (filters.maxHours) {
+      filteredTechnicians = filteredTechnicians.filter(tech =>
+        tech.total_hours <= parseFloat(filters.maxHours)
+      )
+    }
+
+    // Filtro apenas atendimentos externos
+    if (filters.showExternalOnly) {
+      filteredTechnicians = filteredTechnicians.filter(tech =>
+        tech.external_services_count > 0
+      )
+    }
+
+    return {
+      technicians: filteredTechnicians,
+      clients: filteredClients
+    }
+  }
+
+  // Atualizar dados filtrados quando filtros mudarem
+  useEffect(() => {
+    setFilteredData(applyFilters())
+  }, [filters, technicianData, chartsData])
+
+  const clearFilters = () => {
+    setFilters({
+      clientFilter: '',
+      technicianFilter: '',
+      minHours: '',
+      maxHours: '',
+      showExternalOnly: false
+    })
   }
 
   const getIntensityColor = (intensity) => {
@@ -91,19 +189,126 @@ const NewAnalyticsPage = () => {
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Analytics</h1>
           <p className="text-gray-600 dark:text-gray-400">Análise detalhada de performance e padrões</p>
         </div>
-        <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
-          <SelectTrigger className="w-48">
-            <SelectValue placeholder="Selecione o período" />
-          </SelectTrigger>
-          <SelectContent>
-            {periods.map((period) => (
-              <SelectItem key={period.label} value={period.label}>
-                {period.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-4">
+          <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="Selecione o período" />
+            </SelectTrigger>
+            <SelectContent>
+              {periods.map((period) => (
+                <SelectItem key={period.label} value={period.label}>
+                  {period.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          
+          {selectedPeriod && (
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                const [month, year] = selectedPeriod.split('/')
+                loadAllAnalyticsData(parseInt(month), parseInt(year))
+              }}
+              disabled={loading}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+              Atualizar
+            </Button>
+          )}
+        </div>
       </div>
+
+      {/* Painel de Filtros */}
+      {heatmapData && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Filter className="h-5 w-5" />
+              Filtros
+            </CardTitle>
+            <CardDescription>
+              Refine a análise com filtros específicos
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="client-filter">Cliente</Label>
+                <Select value={filters.clientFilter} onValueChange={(value) => setFilters({...filters, clientFilter: value})}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Todos os clientes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Todos os clientes</SelectItem>
+                    {availableClients.map((client) => (
+                      <SelectItem key={client} value={client}>
+                        {client}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="tech-filter">Técnico</Label>
+                <Select value={filters.technicianFilter} onValueChange={(value) => setFilters({...filters, technicianFilter: value})}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Todos os técnicos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Todos os técnicos</SelectItem>
+                    {availableTechnicians.map((tech) => (
+                      <SelectItem key={tech} value={tech}>
+                        {tech}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="min-hours">Horas Mínimas</Label>
+                <Input
+                  id="min-hours"
+                  type="number"
+                  value={filters.minHours}
+                  onChange={(e) => setFilters({...filters, minHours: e.target.value})}
+                  placeholder="Ex: 10"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="max-hours">Horas Máximas</Label>
+                <Input
+                  id="max-hours"
+                  type="number"
+                  value={filters.maxHours}
+                  onChange={(e) => setFilters({...filters, maxHours: e.target.value})}
+                  placeholder="Ex: 100"
+                />
+              </div>
+            </div>
+            
+            <div className="flex items-center justify-between mt-4">
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="external-only"
+                  checked={filters.showExternalOnly}
+                  onChange={(e) => setFilters({...filters, showExternalOnly: e.target.checked})}
+                  className="rounded"
+                />
+                <Label htmlFor="external-only">Apenas atendimentos externos</Label>
+              </div>
+              
+              <Button variant="outline" onClick={clearFilters}>
+                Limpar Filtros
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {error && (
         <Alert variant="destructive">
@@ -123,7 +328,7 @@ const NewAnalyticsPage = () => {
 
           <TabsContent value="overview" className="space-y-6">
             {/* Estatísticas Resumo */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Total de Chamados</CardTitle>
@@ -176,43 +381,153 @@ const NewAnalyticsPage = () => {
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold text-purple-600">
-                    {technicianData?.performance_data?.length || 0}
+                    {(filteredData?.technicians || technicianData?.performance_data)?.length || 0}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Técnicos ativos no período
+                    {filters.technicianFilter ? 'Filtrados' : 'Total'} no período
                   </p>
                 </CardContent>
               </Card>
             </div>
 
+            {/* Métricas Adicionais */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Atendimentos Externos</CardTitle>
+                  <CardDescription>Deslocamentos e atendimentos presenciais</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-sm">Total de atendimentos:</span>
+                      <span className="font-semibold">
+                        {(filteredData?.technicians || technicianData?.performance_data || [])
+                          .reduce((sum, tech) => sum + (tech.external_services_count || 0), 0)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm">Técnicos envolvidos:</span>
+                      <span className="font-semibold">
+                        {(filteredData?.technicians || technicianData?.performance_data || [])
+                          .filter(tech => tech.external_services_count > 0).length}
+                      </span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Distribuição de Carga</CardTitle>
+                  <CardDescription>Análise de workload entre analistas</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {(() => {
+                      const techs = filteredData?.technicians || technicianData?.performance_data || []
+                      const hours = techs.map(t => t.total_hours).filter(h => h > 0)
+                      const avg = hours.length > 0 ? hours.reduce((a, b) => a + b, 0) / hours.length : 0
+                      const min = hours.length > 0 ? Math.min(...hours) : 0
+                      const max = hours.length > 0 ? Math.max(...hours) : 0
+                      
+                      return (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-sm">Média de horas:</span>
+                            <span className="font-semibold">{formatHoursToHoursMinutes(avg)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-sm">Variação:</span>
+                            <span className="font-semibold">{formatHoursToHoursMinutes(min)} - {formatHoursToHoursMinutes(max)}</span>
+                          </div>
+                        </>
+                      )
+                    })()}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Produtividade</CardTitle>
+                  <CardDescription>Métricas de eficiência</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {(() => {
+                      const techs = filteredData?.technicians || technicianData?.performance_data || []
+                      const totalTickets = techs.reduce((sum, tech) => sum + tech.ticket_count, 0)
+                      const totalHours = techs.reduce((sum, tech) => sum + tech.total_hours, 0)
+                      const avgTimePerTicket = totalTickets > 0 ? totalHours / totalTickets : 0
+                      
+                      return (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-sm">Tempo médio/chamado:</span>
+                            <span className="font-semibold">{formatHoursToHoursMinutes(avgTimePerTicket)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-sm">Chamados/hora:</span>
+                            <span className="font-semibold">
+                              {totalHours > 0 ? (totalTickets / totalHours).toFixed(2) : '0.00'}
+                            </span>
+                          </div>
+                        </>
+                      )
+                    })()}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
             {/* Top Performers */}
-            {technicianData && technicianData.performance_data?.length > 0 && (
+            {(filteredData?.technicians || technicianData?.performance_data)?.length > 0 && (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Users className="h-5 w-5" />
-                    Top Performers
+                    Top Performers {filters.technicianFilter || filters.minHours || filters.maxHours || filters.showExternalOnly ? '(Filtrados)' : ''}
                   </CardTitle>
                   <CardDescription>
-                    Analistas com melhor performance no período
+                    Analistas com melhor performance no período selecionado
+                    {Object.values(filters).some(f => f) && ' - Aplicando filtros ativos'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {technicianData.performance_data.slice(0, 3).map((tech, index) => (
+                    {(filteredData?.technicians || technicianData?.performance_data)
+                      .sort((a, b) => b.total_hours - a.total_hours)
+                      .slice(0, 6)
+                      .map((tech, index) => (
                       <div key={tech.technician} className="p-4 border rounded-lg bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20">
                         <div className="flex items-center justify-between mb-2">
-                          <div className="text-2xl font-bold text-blue-600">#{index + 1}</div>
-                          <Badge variant={index === 0 ? "default" : "secondary"}>
-                            {index === 0 ? "🥇" : index === 1 ? "🥈" : "🥉"}
+                          <h4 className="font-semibold">{tech.technician}</h4>
+                          <Badge variant={index < 3 ? "default" : "secondary"}>
+                            #{index + 1}
                           </Badge>
                         </div>
-                        <div className="font-semibold text-gray-900 dark:text-white">{tech.technician}</div>
-                        <div className="text-sm text-gray-600 dark:text-gray-400">
-                          {tech.ticket_count} chamados • {formatHoursToHoursMinutes(tech.total_hours)}
-                        </div>
-                        <div className="text-lg font-semibold text-green-600 mt-2">
-                          {formatHoursToHoursMinutes(tech.avg_hours_per_ticket)} média
+                        <div className="space-y-1 text-sm">
+                          <div className="flex justify-between">
+                            <span>Chamados:</span>
+                            <span className="font-medium">{tech.ticket_count}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Horas:</span>
+                            <span className="font-medium">{formatHoursToHoursMinutes(tech.total_hours)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Tempo médio:</span>
+                            <span className="font-medium">
+                              {formatHoursToHoursMinutes(tech.ticket_count > 0 ? tech.total_hours / tech.ticket_count : 0)}
+                            </span>
+                          </div>
+                          {tech.external_services_count > 0 && (
+                            <div className="flex justify-between text-green-600">
+                              <span>Externos:</span>
+                              <span className="font-medium">{tech.external_services_count}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}

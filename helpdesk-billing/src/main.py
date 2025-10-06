@@ -5,7 +5,7 @@ import sys
 # DON'T CHANGE THIS !!!
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, jsonify
 from src.database import db
 from src.models.user import User
 from src.models.client import Client, TicketData
@@ -16,6 +16,7 @@ from src.routes.client import client_bp
 from src.routes.technician import technician_bp
 from src.routes.admin import admin_bp
 from src.routes.analytics import analytics_bp
+from src.routes.auto_clients import auto_clients_bp
 
 def create_app():
     """Cria e configura a aplicação Flask."""
@@ -50,11 +51,19 @@ def create_app():
     app.register_blueprint(technician_bp, url_prefix='/api')
     app.register_blueprint(admin_bp, url_prefix='/api')
     app.register_blueprint(analytics_bp, url_prefix='/api')
+    app.register_blueprint(auto_clients_bp, url_prefix='/api')
 
     # --- Servir Arquivos Estáticos (Frontend) ---
-    @app.route('/', defaults={'path': ''})
+    @app.route('/')
+    def serve_index():
+        return send_from_directory(app.static_folder, 'index.html')
+    
     @app.route('/<path:path>')
     def serve(path):
+        # Não interceptar rotas da API
+        if path.startswith('api/'):
+            return jsonify({'error': 'API endpoint not found'}), 404
+            
         static_folder = app.static_folder
         if path != "" and os.path.exists(os.path.join(static_folder, path)):
             return send_from_directory(static_folder, path)

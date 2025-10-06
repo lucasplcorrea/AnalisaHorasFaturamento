@@ -65,9 +65,9 @@ def upload_file():
     except Exception as e:
         return jsonify({'error': f'Erro interno do servidor: {str(e)}'}), 500
 
-@billing_bp.route('/clients', methods=['GET'])
+@billing_bp.route('/billing/clients', methods=['GET'])
 def get_clients():
-    """Retorna lista de todos os clientes"""
+    """Retorna lista de todos os clientes para faturamento"""
     try:
         clients = db.session.query(Client).all()
         return jsonify([client.to_dict() for client in clients])

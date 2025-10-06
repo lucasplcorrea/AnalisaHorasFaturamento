@@ -10,7 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.j
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog.jsx'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
-import { Users, Edit, Save, X, Loader2, AlertCircle, CheckCircle, Plus, TrendingUp, Clock, DollarSign, BarChart3 } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox.jsx'
+import { Users, Edit, Save, X, Loader2, AlertCircle, CheckCircle, Plus, TrendingUp, Clock, DollarSign, BarChart3, Trash2 } from 'lucide-react'
 import { formatHoursToHoursMinutes, formatCurrency, formatDate } from '@/lib/formatters.js'
 
 const NewClientsPage = () => {
@@ -26,6 +27,11 @@ const NewClientsPage = () => {
   const [saving, setSaving] = useState(false)
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [selectedClient, setSelectedClient] = useState(null)
+  const [syncStatus, setSyncStatus] = useState(null)
+  const [syncing, setSyncing] = useState(false)
+  const [selectedClients, setSelectedClients] = useState(new Set())
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const newClientForm = {
     name: '',
@@ -45,6 +51,7 @@ const NewClientsPage = () => {
   useEffect(() => {
     loadClients()
     loadPeriods()
+    checkSyncStatus()
   }, [])
 
   useEffect(() => {
@@ -99,6 +106,33 @@ const NewClientsPage = () => {
       setClientMetrics(metrics)
     } catch (err) {
       console.error('Erro ao carregar métricas dos clientes:', err)
+    }
+  }
+
+  const checkSyncStatus = async () => {
+    try {
+      const response = await axios.get('/api/clients/sync-check')
+      setSyncStatus(response.data)
+    } catch (err) {
+      console.error('Erro ao verificar status de sincronização:', err)
+    }
+  }
+
+  const handleAutoPopulate = async () => {
+    setSyncing(true)
+    setError(null)
+    setSuccess(null)
+    
+    try {
+      const response = await axios.post('/api/clients/auto-populate')
+      setSuccess(response.data.message)
+      await loadClients()
+      await checkSyncStatus()
+      setTimeout(() => setSuccess(null), 5000)
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro ao sincronizar clientes')
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -167,6 +201,50 @@ const NewClientsPage = () => {
     setEditForm({})
   }
 
+  // Funções de seleção
+  const handleSelectClient = (clientId, checked) => {
+    const newSelection = new Set(selectedClients)
+    if (checked) {
+      newSelection.add(clientId)
+    } else {
+      newSelection.delete(clientId)
+    }
+    setSelectedClients(newSelection)
+  }
+
+  const handleSelectAll = (checked) => {
+    if (checked) {
+      setSelectedClients(new Set(clients.map(client => client.id)))
+    } else {
+      setSelectedClients(new Set())
+    }
+  }
+
+  // Função de exclusão
+  const handleDeleteSelected = async () => {
+    setDeleting(true)
+    setError(null)
+    setSuccess(null)
+    
+    try {
+      const deletePromises = Array.from(selectedClients).map(clientId =>
+        axios.delete(`/api/clients/${clientId}`)
+      )
+      
+      await Promise.all(deletePromises)
+      
+      await loadClients()
+      setSelectedClients(new Set())
+      setShowDeleteDialog(false)
+      setSuccess(`${selectedClients.size} cliente(s) excluído(s) com sucesso!`)
+      setTimeout(() => setSuccess(null), 3000)
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro ao excluir clientes')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const getClientMetrics = (clientName) => {
     return clientMetrics[clientName] || {
       tickets: 0,
@@ -207,6 +285,17 @@ const NewClientsPage = () => {
               ))}
             </SelectContent>
           </Select>
+          
+          {syncStatus && syncStatus.needs_sync && (
+            <Button 
+              onClick={handleAutoPopulate} 
+              disabled={syncing}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              {syncing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Users className="h-4 w-4 mr-2" />}
+              Sincronizar Clientes ({syncStatus.missing_clients_count})
+            </Button>
+          )}
           
           <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
             <DialogTrigger asChild>
@@ -305,6 +394,26 @@ const NewClientsPage = () => {
                   />
                 </div>
                 
+                <div className="space-y-2">
+                  <Label htmlFor="overtime_rate">Valor Hora Extra (R$)</Label>
+                  <Input
+                    id="overtime_rate"
+                    type="number"
+                    value={editForm.overtime_rate}
+                    onChange={(e) => setEditForm({...editForm, overtime_rate: parseFloat(e.target.value)})}
+                  />
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="external_service_rate">Valor Atend. Externo (R$)</Label>
+                  <Input
+                    id="external_service_rate"
+                    type="number"
+                    value={editForm.external_service_rate}
+                    onChange={(e) => setEditForm({...editForm, external_service_rate: parseFloat(e.target.value)})}
+                  />
+                </div>
+                
                 <div className="col-span-2 space-y-2">
                   <Label htmlFor="address">Endereço</Label>
                   <Input
@@ -344,6 +453,19 @@ const NewClientsPage = () => {
         </Alert>
       )}
 
+      {syncStatus && syncStatus.needs_sync && !syncing && (
+        <Alert>
+          <Users className="h-4 w-4" />
+          <AlertDescription>
+            Encontrados {syncStatus.missing_clients_count} novos clientes nos dados processados que ainda não estão cadastrados. 
+            <span className="block mt-1 text-sm text-muted-foreground">
+              Clientes: {syncStatus.missing_clients_sample.slice(0, 3).join(', ')}
+              {syncStatus.missing_clients_sample.length > 3 && ` e mais ${syncStatus.missing_clients_sample.length - 3}...`}
+            </span>
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Tabs defaultValue="management" className="space-y-6">
         <TabsList>
           <TabsTrigger value="management">Gestão de Clientes</TabsTrigger>
@@ -353,21 +475,47 @@ const NewClientsPage = () => {
         <TabsContent value="management" className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Lista de Clientes</CardTitle>
-              <CardDescription>
-                Gerencie as informações e configurações dos seus clientes
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Lista de Clientes</CardTitle>
+                  <CardDescription>
+                    Gerencie as informações e configurações dos seus clientes
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  {selectedClients.size > 0 && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => setShowDeleteDialog(true)}
+                      disabled={deleting}
+                    >
+                      {deleting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Trash2 className="h-4 w-4 mr-2" />}
+                      Excluir ({selectedClients.size})
+                    </Button>
+                  )}
+                  <Button onClick={() => setShowAddDialog(true)}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Novo Cliente
+                  </Button>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-12">
+                        <Checkbox
+                          checked={clients.length > 0 && selectedClients.size === clients.length}
+                          onCheckedChange={handleSelectAll}
+                        />
+                      </TableHead>
                       <TableHead>Cliente</TableHead>
-                      <TableHead>Contato</TableHead>
+                      <TableHead>Contatos</TableHead>
                       <TableHead>Setor</TableHead>
-                      <TableHead>Horas Contratuais</TableHead>
-                      <TableHead>Valor/Hora</TableHead>
+                      <TableHead>Configuração</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Ações</TableHead>
                     </TableRow>
@@ -376,24 +524,41 @@ const NewClientsPage = () => {
                     {clients.map((client) => (
                       <TableRow key={client.id}>
                         <TableCell>
+                          <Checkbox
+                            checked={selectedClients.has(client.id)}
+                            onCheckedChange={(checked) => handleSelectClient(client.id, checked)}
+                          />
+                        </TableCell>
+                        <TableCell>
                           <div>
                             <div className="font-medium">{client.name}</div>
-                            {client.email && (
-                              <div className="text-sm text-muted-foreground">{client.email}</div>
+                            {client.notes && (
+                              <div className="text-xs text-muted-foreground">{client.notes}</div>
                             )}
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div>
-                            {client.contact && <div>{client.contact}</div>}
+                          <div className="space-y-1">
+                            {client.contact && <div className="text-sm">{client.contact}</div>}
+                            {client.email && (
+                              <div className="text-xs text-muted-foreground">{client.email}</div>
+                            )}
                             {client.phone && (
-                              <div className="text-sm text-muted-foreground">{client.phone}</div>
+                              <div className="text-xs text-muted-foreground">{client.phone}</div>
+                            )}
+                            {client.whatsapp_contact && (
+                              <div className="text-xs text-green-600">WhatsApp: {client.whatsapp_contact}</div>
                             )}
                           </div>
                         </TableCell>
                         <TableCell>{client.sector || '-'}</TableCell>
-                        <TableCell>{formatHoursToHoursMinutes(client.contract_hours)}</TableCell>
-                        <TableCell>{formatCurrency(client.hourly_rate)}</TableCell>
+                        <TableCell>
+                          <div className="text-sm">
+                            <div>{formatHoursToHoursMinutes(client.contract_hours)} contratuais</div>
+                            <div className="text-muted-foreground">{formatCurrency(client.hourly_rate)}/h</div>
+                            <div className="text-muted-foreground">{formatCurrency(client.overtime_rate)}/h extra</div>
+                          </div>
+                        </TableCell>
                         <TableCell>
                           <Badge variant={client.active ? "default" : "secondary"}>
                             {client.active ? "Ativo" : "Inativo"}
@@ -548,6 +713,24 @@ const NewClientsPage = () => {
               </div>
               
               <div className="space-y-2">
+                <Label htmlFor="edit-whatsapp">WhatsApp</Label>
+                <Input
+                  id="edit-whatsapp"
+                  value={editForm.whatsapp_contact}
+                  onChange={(e) => setEditForm({...editForm, whatsapp_contact: e.target.value})}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="edit-sector">Setor</Label>
+                <Input
+                  id="edit-sector"
+                  value={editForm.sector}
+                  onChange={(e) => setEditForm({...editForm, sector: e.target.value})}
+                />
+              </div>
+              
+              <div className="space-y-2">
                 <Label htmlFor="edit-contract-hours">Horas Contratuais</Label>
                 <Input
                   id="edit-contract-hours"
@@ -566,6 +749,44 @@ const NewClientsPage = () => {
                   onChange={(e) => setEditForm({...editForm, hourly_rate: parseFloat(e.target.value)})}
                 />
               </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="edit-overtime-rate">Valor Hora Extra (R$)</Label>
+                <Input
+                  id="edit-overtime-rate"
+                  type="number"
+                  value={editForm.overtime_rate}
+                  onChange={(e) => setEditForm({...editForm, overtime_rate: parseFloat(e.target.value)})}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="edit-external-rate">Valor Atend. Externo (R$)</Label>
+                <Input
+                  id="edit-external-rate"
+                  type="number"
+                  value={editForm.external_service_rate}
+                  onChange={(e) => setEditForm({...editForm, external_service_rate: parseFloat(e.target.value)})}
+                />
+              </div>
+              
+              <div className="col-span-2 space-y-2">
+                <Label htmlFor="edit-address">Endereço</Label>
+                <Input
+                  id="edit-address"
+                  value={editForm.address}
+                  onChange={(e) => setEditForm({...editForm, address: e.target.value})}
+                />
+              </div>
+              
+              <div className="col-span-2 space-y-2">
+                <Label htmlFor="edit-notes">Observações</Label>
+                <Input
+                  id="edit-notes"
+                  value={editForm.notes}
+                  onChange={(e) => setEditForm({...editForm, notes: e.target.value})}
+                />
+              </div>
             </div>
             
             <div className="flex justify-end gap-2">
@@ -580,6 +801,33 @@ const NewClientsPage = () => {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Dialog de confirmação de exclusão */}
+      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar Exclusão</DialogTitle>
+            <DialogDescription>
+              Tem certeza que deseja excluir {selectedClients.size} cliente(s) selecionado(s)? 
+              Esta ação não pode ser desfeita.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
+              Cancelar
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={handleDeleteSelected}
+              disabled={deleting}
+            >
+              {deleting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Trash2 className="h-4 w-4 mr-2" />}
+              Excluir
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
